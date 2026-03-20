@@ -23,23 +23,25 @@ public partial class MainForm : Form
         var totalCats = SongListFetcher.Categories.Length;
         SetStatus("曲リスト取得中…", showProgress: true, progressStyle: ProgressBarStyle.Blocks, progressMax: totalCats, progressValue: 0);
 
-        int done = 0;
-        foreach (var cat in SongListFetcher.Categories)
+        var tasks = SongListFetcher.Categories.Select(async cat =>
         {
-            statusLabel.Text = $"取得中… {cat.DisplayName}";
-            var titles = await SongListFetcher.FetchTitlesAsync(cat.FileName);
-            if (titles.Count == 0)
-                continue;
+            var songs = await SongListFetcher.FetchSongsAsync(cat.FileName);
+            if (songs.Count == 0) return (0, 0);
 
             var fileName = $"songlist_{cat.DisplayName}.txt";
             var filePath = Path.Combine(exportDir, fileName);
-            await File.WriteAllLinesAsync(filePath, titles, Encoding.UTF8);
+            var outputLines = songs.Select((s, i) =>
+                $"{i + 1:000}\t{SanitizeTsvCell(s.Title)}\t{SanitizeTsvCell(s.Subtitle)}");
+            await File.WriteAllLinesAsync(filePath, outputLines, Encoding.UTF8);
 
-            fileCount++;
-            totalTitles += titles.Count;
+            return (1, songs.Count);
+        });
 
-            done++;
-            statusProgress.Value = Math.Min(statusProgress.Maximum, done);
+        var results = await Task.WhenAll(tasks);
+        foreach (var (f, t) in results)
+        {
+            fileCount += f;
+            totalTitles += t;
         }
 
         SetStatus($"曲リスト取得完了（{fileCount} 件 / {totalTitles} 曲）", showProgress: false);
@@ -107,8 +109,9 @@ public partial class MainForm : Form
         Directory.CreateDirectory(songsRoot);
 
         int totalCopied = 0;
+        int totalSkipped = 0;
         int totalUnmatched = 0;
-        var unmatchedLogs = new List<string>();
+        var unmatchedLogs = new System.Collections.Concurrent.ConcurrentBag<string>();
 
         var mappings = new[]
         {
@@ -118,83 +121,124 @@ public partial class MainForm : Form
             new { Source = "03 Vocaloid",          Dest = "03 ボーカロイド曲",     Export = "ボーカロイド曲",     BoxTitle = "ボーカロイド™曲", BoxGenre = "ボーカロイド",     BoxExplanation = "ボーカロイド™の曲をあつめたよ!" },
             new { Source = "07 Game Music",        Dest = "04 ゲームミュージック", Export = "ゲームミュージック", BoxTitle = "ゲームミュージック", BoxGenre = "ゲームミュージック", BoxExplanation = "ゲームミュージックの曲をあつめたよ!" },
             new { Source = "05 Variety",           Dest = "05 バラエティ",         Export = "バラエティ",         BoxTitle = "バラエティ",         BoxGenre = "バラエティ",         BoxExplanation = "バラエティの曲をあつめたよ!" },
-            new { Source = "06 Classical",         Dest = "06 クラシック",         Export = "クラシック",         BoxTitle = "クラシック",         BoxGenre = "クラシック",         BoxExplanation = "クラシックの曲をあつめたよ!" },
             new { Source = "09 Namco Original",    Dest = "07 ナムコオリジナル",   Export = "ナムコオリジナル",   BoxTitle = "ナムコオリジナル",   BoxGenre = "ナムコオリジナル",   BoxExplanation = "ナムコオリジナルの曲をあつめたよ!" },
+            new { Source = "06 Classical",         Dest = "06 クラシック",         Export = "クラシック",         BoxTitle = "クラシック",         BoxGenre = "クラシック",         BoxExplanation = "クラシックの曲をあつめたよ!" },
         };
 
-        var exportIndexes = LoadExportIndexes(exportDir);
+        var exportGroups = LoadExportIndexes(exportDir);
 
-        foreach (var m in mappings)
+        Parallel.ForEach(Directory.GetDirectories(tempSongsDir), srcCatDir =>
         {
-            var srcCatDir = Path.Combine(tempSongsDir, m.Source);
-            if (!Directory.Exists(srcCatDir))
-                continue;
+            var srcCategoryName = Path.GetFileName(srcCatDir);
+            // 同名曲が複数カテゴリに存在する場合は、元フォルダと同じカテゴリを優先する
+            var preferredMappings = mappings
+                .OrderBy(m => string.Equals(m.Source, srcCategoryName, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .ToArray();
 
-            var targets = mappings;
-
-            foreach (var songDir in Directory.GetDirectories(srcCatDir))
+            Parallel.ForEach(Directory.GetDirectories(srcCatDir), songDir =>
             {
-                var tjaPath = Directory.GetFiles(songDir, "*.tja", SearchOption.AllDirectories).FirstOrDefault();
-                if (tjaPath is null)
+                var tjaPaths = Directory.GetFiles(songDir, "*.tja", SearchOption.AllDirectories);
+                if (tjaPaths.Length == 0)
                 {
-                    totalUnmatched++;
+                    Interlocked.Increment(ref totalUnmatched);
                     unmatchedLogs.Add($"[NO_TJA] {songDir}");
-                    continue;
+                    return;
                 }
 
-                var titleJaRaw = ReadTitleJa(tjaPath);
-                var titleJa = NormalizeTitle(titleJaRaw ?? string.Empty);
-                if (string.IsNullOrEmpty(titleJa))
+                var matchedAnyInFolder = false;
+                foreach (var tjaPath in tjaPaths)
                 {
-                    totalUnmatched++;
-                    unmatchedLogs.Add($"[NO_TITLE] {songDir}");
-                    continue;
+                    var info = ReadSongInfo(tjaPath);
+                    if (info == null) continue;
+
+                    var titleNorm = NormalizationUtils.NormalizeTitle(info.Title);
+                    var subtitleNorm = NormalizationUtils.NormalizeSubtitle(info.Subtitle);
+
+                    foreach (var target in preferredMappings)
+                    {
+                        if (!exportGroups.TryGetValue(target.Export, out var songsByTitle))
+                            continue;
+                        
+                        if (!songsByTitle.TryGetValue(titleNorm, out var versions))
+                            continue;
+
+                        // マッチングロジック (完全一致 -> 部分一致 -> タイトルのみ一致)
+                        var match = versions.FirstOrDefault(v => v.SubtitleNorm == subtitleNorm);
+                        if (match.Index == 0 && !string.IsNullOrEmpty(subtitleNorm))
+                        {
+                            match = versions.FirstOrDefault(v => 
+                                v.SubtitleNorm.Contains(subtitleNorm) || subtitleNorm.Contains(v.SubtitleNorm));
+                        }
+                        if (match.Index == 0 && versions.Count == 1)
+                        {
+                            match = versions[0];
+                        }
+
+                        if (match.Index == 0) continue;
+
+                        // フォルダ名生成
+                        var num = match.Index.ToString("000");
+                        var tjaBaseName = Path.GetFileNameWithoutExtension(tjaPath);
+                        var safeFolderName = SanitizeFolderName(tjaBaseName);
+                        var newFolderName = $"{num} {safeFolderName}";
+                        var dstSongDir = Path.Combine(songsRoot, target.Dest, newFolderName);
+                        
+                        matchedAnyInFolder = true;
+                        
+                        // ディレクトリの有無チェックと作成
+                        var dstGenreDir = Path.Combine(songsRoot, target.Dest);
+                        if (Directory.Exists(dstSongDir)) {
+                            Interlocked.Increment(ref totalSkipped);
+                            continue;
+                        }
+
+                        EnsureBoxDef(dstGenreDir, target.BoxTitle, target.BoxGenre, target.BoxExplanation);
+
+                        CopyDirectory(songDir, dstSongDir, tjaPath);
+                        Interlocked.Increment(ref totalCopied);
+                        break; // このTJAのマッチングは完了
+                    }
                 }
 
-                var matchedAny = false;
-                foreach (var target in targets)
+                if (!matchedAnyInFolder)
                 {
-                    if (!exportIndexes.TryGetValue(target.Export, out var indexByTitle))
-                        continue;
-                    if (!indexByTitle.TryGetValue(titleJa, out var idx))
-                        continue;
+                    Interlocked.Increment(ref totalUnmatched);
+                    
+                    // 最も近い候補を探してログに残す（デバッグ用）
+                    var info = ReadSongInfo(tjaPaths.First());
+                    var titleNorm = info != null ? NormalizationUtils.NormalizeTitle(info.Title) : "??";
+                    var candidates = exportGroups.Values
+                        .SelectMany(g => g.TryGetValue(titleNorm, out var v) ? v : Enumerable.Empty<(string Sub, int Idx)>())
+                        .Select(v => v.Sub)
+                        .ToList();
 
-                    matchedAny = true;
-                    var dstCatDir = Path.Combine(songsRoot, target.Dest);
-                    Directory.CreateDirectory(dstCatDir);
-                    EnsureBoxDef(dstCatDir, target.BoxTitle, target.BoxGenre, target.BoxExplanation);
-
-                    var num = idx.ToString("000");
-                    var safeTitle = SanitizeFolderName(titleJa);
-                    var newFolderName = $"{num} {safeTitle}";
-                    var dstSongDir = Path.Combine(dstCatDir, newFolderName);
-                    if (Directory.Exists(dstSongDir))
-                        continue;
-
-                    CopyDirectory(songDir, dstSongDir);
-                    totalCopied++;
+                    if (candidates.Count > 0)
+                    {
+                        var tjaSub = NormalizationUtils.NormalizeSubtitle(info?.Subtitle ?? "");
+                        unmatchedLogs.Add($"[SUBTITLE_MISMATCH] {songDir} (タイトル一致: [{titleNorm}] \n Web側候補: {string.Join(", ", candidates.Select(c => $"[{c}] (Hex: {ToHex(c)})"))} \n TJA側: [{tjaSub}] (Hex: {ToHex(tjaSub)}))");
+                    }
+                    else
+                    {
+                        unmatchedLogs.Add($"[TITLE_NOT_FOUND] {songDir} (タイトル [{titleNorm}] (Hex: {ToHex(titleNorm)}) 自体が見つかりません)");
+                    }
                 }
+            });
+        });
 
-                if (!matchedAny)
-                {
-                    totalUnmatched++;
-                    unmatchedLogs.Add($"[NO_MATCH] {titleJa} ({songDir})");
-                }
-            }
-        }
-
-        if (unmatchedLogs.Count > 0)
+        if (!unmatchedLogs.IsEmpty)
         {
             var logPath = Path.Combine(exportDir, "log.txt");
             File.WriteAllLines(logPath, unmatchedLogs, Encoding.UTF8);
         }
 
-        return $"コピー完了: {totalCopied} 曲 (未マッチ {totalUnmatched} 件)";
+        return $"コピー完了: {totalCopied} 曲 / 既設: {totalSkipped} 曲 (未マッチ {totalUnmatched} 件 / log.txt を確認してください)";
     }
 
-    static Dictionary<string, Dictionary<string, int>> LoadExportIndexes(string exportDir)
+    static string ToHex(string s) => string.Join("", s.Select(c => $"{(int)c:X4}"));
+
+    static Dictionary<string, Dictionary<string, List<(string SubtitleNorm, int Index)>>> LoadExportIndexes(string exportDir)
     {
-        var result = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, Dictionary<string, List<(string SubtitleNorm, int Index)>>>(StringComparer.OrdinalIgnoreCase);
         foreach (var cat in SongListFetcher.Categories)
         {
             var fileName = $"songlist_{cat.DisplayName}.txt";
@@ -203,56 +247,137 @@ public partial class MainForm : Form
                 continue;
 
             var lines = File.ReadAllLines(filePath, Encoding.UTF8);
-            var indexByTitle = new Dictionary<string, int>(StringComparer.Ordinal);
+            var songsByTitle = new Dictionary<string, List<(string SubtitleNorm, int Index)>>(StringComparer.Ordinal);
             for (int i = 0; i < lines.Length; i++)
             {
-                var title = NormalizeTitle(lines[i]);
-                if (string.IsNullOrEmpty(title))
-                    continue;
-                if (!indexByTitle.ContainsKey(title))
-                    indexByTitle[title] = i + 1;
+                var parts = lines[i].Split('\t');
+                if (parts.Length < 2) continue; // 不正な行
+                
+                // 形式: "連番\t曲名\tサブタイトル"
+                var idStr = parts[0];
+                var title = parts[1];
+                var subtitle = parts.Length > 2 ? parts[2] : string.Empty;
+
+                var titleNorm = NormalizationUtils.NormalizeTitle(title);
+                var subtitleNorm = NormalizationUtils.NormalizeSubtitle(subtitle);
+                var officialIdx = int.TryParse(idStr, out var n) ? n : i + 1;
+
+                if (!songsByTitle.TryGetValue(titleNorm, out var versions))
+                {
+                    versions = new List<(string SubtitleNorm, int Index)>();
+                    songsByTitle[titleNorm] = versions;
+                }
+                versions.Add((subtitleNorm, officialIdx));
             }
 
-            result[cat.DisplayName] = indexByTitle;
+            result[cat.DisplayName] = songsByTitle;
         }
 
         return result;
     }
 
-    static string? ReadTitleJa(string tjaPath)
+    public record SongDetail(string Title, string Subtitle);
+
+    static SongDetail? ReadSongInfo(string tjaPath)
     {
-        string text;
         try
         {
-            var sjis = Encoding.GetEncoding(932);
-            text = File.ReadAllText(tjaPath, sjis);
-        }
-        catch
-        {
-            text = File.ReadAllText(tjaPath, Encoding.UTF8);
-        }
-
-        foreach (var rawLine in text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
-        {
-            var line = rawLine.TrimStart();
-            if (line.StartsWith("TITLEJA:", StringComparison.OrdinalIgnoreCase))
+            // まずは UTF-8 (BOMあり/なし両対応) で読み込んでみる
+            var lines = File.ReadAllLines(tjaPath, Encoding.UTF8);
+            
+            // UTF-8 で読み込んだ際に「」(U+FFFD) が含まれている場合、または
+            // 日本語が含まれているはずなのに UTF-8 として不正なバイトシーケンスだった場合、
+            // Shift-JIS (CP932) として再読み込みを試行する
+            if (lines.Any(l => l.Contains('\uFFFD')))
             {
-                return line["TITLEJA:".Length..].Trim();
+                lines = File.ReadAllLines(tjaPath, Encoding.GetEncoding(932));
+            }
+            
+            string? title = null, titleJa = null;
+            string? subtitle = null, subtitleJa = null;
+            
+            foreach (var rawLine in lines)
+            {
+                var line = rawLine.Trim();
+                if (line.StartsWith("TITLEJA:", StringComparison.OrdinalIgnoreCase)) titleJa = line["TITLEJA:".Length..].Trim();
+                else if (line.StartsWith("TITLE:", StringComparison.OrdinalIgnoreCase)) title = line["TITLE:".Length..].Trim();
+                else if (line.StartsWith("SUBTITLEJA:", StringComparison.OrdinalIgnoreCase)) subtitleJa = line["SUBTITLEJA:".Length..].Trim();
+                else if (line.StartsWith("SUBTITLE:", StringComparison.OrdinalIgnoreCase)) subtitle = line["SUBTITLE:".Length..].Trim();
+            }
+            
+            var resTitle = titleJa ?? title;
+            if (resTitle == null) return null;
+
+            var resSubtitle = subtitleJa ?? subtitle ?? string.Empty;
+
+            // TITLEに「曲名 ～サブタイトル～」形式で入っているケースを補正
+            // 例: 「白鳥の湖 ～still a duckling～」
+            if (TryExtractInlineSubtitleFromTitle(resTitle, out var mainTitle, out var inlineSubtitle))
+            {
+                resTitle = mainTitle;
+
+                // TJAのSUBTITLEが "--" / "++" で始まる場合は作曲者クレジットであることが多いので、
+                // 曲照合にはTITLE由来のサブタイトルを優先する
+                if (string.IsNullOrWhiteSpace(resSubtitle)
+                    || resSubtitle.StartsWith("--", StringComparison.Ordinal)
+                    || resSubtitle.StartsWith("++", StringComparison.Ordinal))
+                {
+                    resSubtitle = inlineSubtitle;
+                }
+            }
+
+            return new SongDetail(resTitle, resSubtitle);
+        }
+        catch { return null; }
+    }
+
+    static bool TryExtractInlineSubtitleFromTitle(string title, out string mainTitle, out string inlineSubtitle)
+    {
+        mainTitle = title.Trim();
+        inlineSubtitle = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(title))
+            return false;
+
+        var trimmed = title.Trim();
+        if (trimmed.Length < 3)
+            return false;
+
+        // 末尾が波ダッシュ系（～/〜/~）で閉じられている場合のみ対象
+        var end = trimmed.Length - 1;
+        if (!IsWaveDash(trimmed[end]))
+            return false;
+
+        // 終端の1つ手前までで、最後の波ダッシュを開始位置として探す
+        var start = -1;
+        for (int i = end - 1; i >= 0; i--)
+        {
+            if (IsWaveDash(trimmed[i]))
+            {
+                start = i;
+                break;
             }
         }
+        if (start <= 0 || start >= end - 1)
+            return false;
 
-        return null;
+        // 「曲名 ～サブタイトル～」のように開始側の前に区切り空白がある場合のみ分離する
+        if (!char.IsWhiteSpace(trimmed[start - 1]))
+            return false;
+
+        var titlePart = trimmed[..start].TrimEnd();
+        var subtitlePart = trimmed[(start + 1)..end].Trim();
+        if (string.IsNullOrWhiteSpace(titlePart) || string.IsNullOrWhiteSpace(subtitlePart))
+            return false;
+
+        mainTitle = titlePart;
+        inlineSubtitle = subtitlePart;
+        return true;
     }
 
-    static string NormalizeTitle(string s)
-    {
-        if (string.IsNullOrWhiteSpace(s))
-            return string.Empty;
+    static bool IsWaveDash(char c) => c == '～' || c == '〜' || c == '~';
 
-        var work = s.Trim().Replace('　', ' ');
-        work = string.Join(" ", work.Split((char[])null!, StringSplitOptions.RemoveEmptyEntries));
-        return work.ToUpperInvariant();
-    }
+
 
     static string SanitizeFolderName(string name)
     {
@@ -263,32 +388,63 @@ public partial class MainForm : Form
             sb.Replace(c.ToString(), "");
         }
 
-        var result = sb.ToString().TrimEnd(' ', '.');
+        // '*' など特定の記号が残る可能性があるため、明示的に除去（環境依存の回避）
+        sb.Replace("*", "");
+        sb.Replace("?", "");
+        sb.Replace(":", "");
+        sb.Replace("|", "");
+
+        var result = sb.ToString().Trim().TrimEnd('.');
         return string.IsNullOrWhiteSpace(result) ? "NoName" : result;
     }
 
-    static void EnsureBoxDef(string dstCatDir, string title, string genre, string explanation)
+    private static readonly object _boxLock = new();
+    static void EnsureBoxDef(string dir, string title, string genre, string explanation)
     {
-        var destBox = Path.Combine(dstCatDir, "box.def");
-        if (File.Exists(destBox))
-            return;
-
-        var lines = new[]
+        lock (_boxLock)
         {
-            $"#TITLE:{title}",
-            $"#GENRE:{genre}",
-            $"#EXPLANATION:{explanation}"
-        };
-        File.WriteAllLines(destBox, lines, Encoding.UTF8);
+            var destBox = Path.Combine(dir, "box.def");
+
+            var removePrefixes = new[] { "#SELECTBG:", "#BOXCOLOR:", "#FONTCOLOR:" };
+            if (File.Exists(destBox))
+            {
+                var currentLines = File.ReadAllLines(destBox, Encoding.UTF8);
+                var filtered = currentLines
+                    .Where(line => !removePrefixes.Any(prefix =>
+                        line.TrimStart().StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                    .ToArray();
+
+                if (filtered.Length != currentLines.Length)
+                    File.WriteAllLines(destBox, filtered, Encoding.UTF8);
+                return;
+            }
+
+            Directory.CreateDirectory(dir);
+            var lines = new[]
+            {
+                $"#TITLE: {title}",
+                $"#GENRE: {genre}",
+                $"#EXPLANATION: {explanation}",
+            };
+            File.WriteAllLines(destBox, lines, Encoding.UTF8);
+        }
     }
 
-    static void CopyDirectory(string sourceDir, string destDir)
+    static void CopyDirectory(string sourceDir, string destDir, string? targetTjaPath = null)
     {
         Directory.CreateDirectory(destDir);
 
         foreach (var file in Directory.GetFiles(sourceDir))
         {
             var name = Path.GetFileName(file);
+            
+            // TJAファイルの場合、ターゲットではないTJAはコピーしない
+            if (targetTjaPath != null && name.EndsWith(".tja", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.Equals(file, targetTjaPath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
+
             var dest = Path.Combine(destDir, name);
             File.Copy(file, dest, overwrite: false);
         }
@@ -297,7 +453,7 @@ public partial class MainForm : Form
         {
             var name = Path.GetFileName(dir);
             var destSub = Path.Combine(destDir, name);
-            CopyDirectory(dir, destSub);
+            CopyDirectory(dir, destSub, targetTjaPath);
         }
     }
 
@@ -342,6 +498,15 @@ public partial class MainForm : Form
     static string GetExistingPathOrEmpty(string? path)
     {
         return !string.IsNullOrWhiteSpace(path) && Directory.Exists(path) ? path : string.Empty;
+    }
+
+    static string SanitizeTsvCell(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+        return string.Join(" ", normalized.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
 
     static string ResolveSongsRoot(string selectedFolder)

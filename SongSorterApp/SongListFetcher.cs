@@ -5,8 +5,10 @@ using HtmlAgilityPack;
 
 namespace SongSorterApp;
 
+public record SongInfo(string Title, string Subtitle);
+
 /// <summary>
-/// 太鼓の達人 楽曲リストページから曲名を抽出する
+/// 太鼓の達人 楽曲リストページから曲名とサブタイトル（アーティスト名など）を抽出する
 /// </summary>
 public static class SongListFetcher
 {
@@ -36,9 +38,9 @@ public static class SongListFetcher
     public static string GetUrl(string fileName) => BaseUrl + fileName;
 
     /// <summary>
-    /// 指定カテゴリのHTMLを取得し、曲名リストを返す
+    /// 指定カテゴリのHTMLを取得し、曲情を報リストを返す
     /// </summary>
-    public static async Task<List<string>> FetchTitlesAsync(string fileName, CancellationToken ct = default)
+    public static async Task<List<SongInfo>> FetchSongsAsync(string fileName, CancellationToken ct = default)
     {
         var url = GetUrl(fileName);
         using var response = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
@@ -50,46 +52,88 @@ public static class SongListFetcher
             : Encoding.UTF8;
         var html = encoding.GetString(bytes);
 
-        return ExtractTitles(html);
+        return ExtractSongs(html);
     }
 
     /// <summary>
-    /// HTMLから &lt;th&gt; の最初のテキストノードのみを曲名として抽出
+    /// HTMLから &lt;th&gt; から曲名とサブタイトルを抽出
     /// </summary>
-    public static List<string> ExtractTitles(string html)
+    public static List<SongInfo> ExtractSongs(string html)
     {
         var doc = new HtmlAgilityPack.HtmlDocument();
         doc.LoadHtml(html);
 
-        var titles = new List<string>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var songs = new List<SongInfo>();
+        var seenNormalized = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var th in doc.DocumentNode.SelectNodes("//th") ?? Enumerable.Empty<HtmlNode>())
         {
-            var title = GetFirstTextFromTh(th);
+            var title = GetTitleFromTh(th);
             if (string.IsNullOrWhiteSpace(title)) continue;
-            title = title.Trim();
+            title = NormalizeCellText(title);
+             
+            // 明らかな「曲名」ではない行をスキップ
             if (SkipTitles.Contains(title)) continue;
-            if (seen.Add(title))
-                titles.Add(title);
+            if (title.Contains("ショップ") || title.Contains("AIバトル") || title.Contains("アイコンの説明") || title.Contains("どんメダル")) continue;
+            if (title == "曲名" || title == "難易度" || title.StartsWith("各アイコン")) continue;
+
+            // <p> 内のテキストをサブタイトルとして取得
+            var subtitleNode = th.SelectSingleNode(".//p");
+            var subtitle = subtitleNode != null ? NormalizeCellText(subtitleNode.InnerText) : string.Empty;
+
+            // 重複チェック（正規化したキーで判定）
+            var normKey = $"{NormalizationUtils.NormalizeTitle(title)}|{NormalizationUtils.NormalizeSubtitle(subtitle)}";
+             
+            if (seenNormalized.Add(normKey))
+            {
+                songs.Add(new SongInfo(title, subtitle));
+            }
         }
 
-        return titles;
+        return songs;
     }
 
-    static string? GetFirstTextFromTh(HtmlNode th)
+    static string? GetTitleFromTh(HtmlNode th)
     {
+        var pieces = new List<string>();
         foreach (var node in th.ChildNodes)
         {
-            if (node.NodeType == HtmlNodeType.Text)
-            {
-                var text = node.InnerText?.Trim();
-                if (!string.IsNullOrEmpty(text))
-                    return text;
-            }
-            else
-                break; // 最初の要素タグで終了（span, p などは曲名に含めない）
+            if (node.Name.Equals("p", StringComparison.OrdinalIgnoreCase))
+                break; // サブタイトル開始
+
+            if (ShouldSkipTitleNode(node))
+                continue;
+
+            var text = NormalizeCellText(node.InnerText);
+            if (string.IsNullOrEmpty(text))
+                continue;
+
+            pieces.Add(text);
         }
-        return null;
+
+        var res = NormalizeCellText(string.Join(" ", pieces));
+        return string.IsNullOrEmpty(res) ? null : res;
+    }
+
+    static bool ShouldSkipTitleNode(HtmlNode node)
+    {
+        if (!node.Name.Equals("span", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var className = node.GetAttributeValue("class", string.Empty);
+        if (string.IsNullOrWhiteSpace(className))
+            return false;
+
+        return className.Contains("new", StringComparison.OrdinalIgnoreCase)
+               || className.Contains("ico", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string NormalizeCellText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var decoded = System.Net.WebUtility.HtmlDecode(text).Replace('\u00A0', ' ');
+        return string.Join(" ", decoded.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
 }
