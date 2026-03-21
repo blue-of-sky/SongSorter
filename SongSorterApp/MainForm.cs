@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 
@@ -196,7 +197,7 @@ public partial class MainForm : Form
         var unmatchedLogLatestShared = Path.Combine(sharedLogsDir, "unmatched_latest.log");
         var unmatchedLogPathEmergency = Path.Combine(emergencyLogsDir, $"unmatched_{runId}.log");
         var unmatchedLogLatestEmergency = Path.Combine(emergencyLogsDir, "unmatched_latest.log");
-        var detailLogs = new List<string>
+        var detailLogPreamble = new List<string>
         {
             $"run_id={runId}",
             $"started_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}",
@@ -206,11 +207,17 @@ public partial class MainForm : Form
             $"shared_logs_dir={sharedLogsDir}",
             $"emergency_logs_dir={emergencyLogsDir}"
         };
+        var detailLogs = new ConcurrentBag<string>();
 
         int totalCopied = 0;
         int totalSkipped = 0;
         int totalUnmatched = 0;
-        var unmatchedLogs = new List<string>();
+        var unmatchedLogs = new ConcurrentBag<string>();
+        var copyPathClaims = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = Math.Max(2, Math.Min(Environment.ProcessorCount * 2, 16))
+        };
 
         var mappings = new[]
         {
@@ -247,9 +254,12 @@ public partial class MainForm : Form
             var preferredMappings = mappings
                 .OrderBy(m => string.Equals(m.Source, srcCategoryName, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ToArray();
-            detailLogs.Add($"source_begin\tcategory={srcCategoryName}\tsong_dirs={Directory.GetDirectories(srcCatDir).Length}");
+            var songDirs = Directory.GetDirectories(srcCatDir)
+                .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            detailLogs.Add($"source_begin\tcategory={srcCategoryName}\tsong_dirs={songDirs.Length}");
 
-            foreach (var songDir in Directory.GetDirectories(srcCatDir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+            Parallel.ForEach(songDirs, parallelOptions, songDir =>
             {
                 var perSongLogs = new List<string>();
                 var tjaPaths = Directory
@@ -258,10 +268,10 @@ public partial class MainForm : Form
                     .ToArray();
                 if (tjaPaths.Length == 0)
                 {
-                    totalUnmatched++;
+                    Interlocked.Increment(ref totalUnmatched);
                     unmatchedLogs.Add($"[NO_TJA] {songDir}");
                     detailLogs.Add($"song_no_tja\tsource={srcCategoryName}\tsong_dir={songDir}");
-                    continue;
+                    return;
                 }
 
                 var tjaCandidates = new List<(string Path, SongDetail Info, string TitleNorm, string SubtitleNorm, string FullTitleNorm)>();
@@ -287,11 +297,12 @@ public partial class MainForm : Form
 
                 if (tjaCandidates.Count == 0)
                 {
-                    totalUnmatched++;
+                    Interlocked.Increment(ref totalUnmatched);
                     unmatchedLogs.Add($"[NO_VALID_TJA] {songDir}");
-                    detailLogs.AddRange(perSongLogs);
+                    foreach (var line in perSongLogs)
+                        detailLogs.Add(line);
                     detailLogs.Add($"song_no_valid_tja\tsource={srcCategoryName}\tsong_dir={songDir}");
-                    continue;
+                    return;
                 }
 
                 var matchedAnyInFolder = false;
@@ -336,7 +347,7 @@ public partial class MainForm : Form
                         var match = versions.FirstOrDefault(v => v.SubtitleNorm == candidate.SubtitleNorm);
                         if (match.Index == 0 && !string.IsNullOrEmpty(candidate.SubtitleNorm))
                         {
-                            match = versions.FirstOrDefault(v => 
+                            match = versions.FirstOrDefault(v =>
                                 v.SubtitleNorm.Contains(candidate.SubtitleNorm) || candidate.SubtitleNorm.Contains(v.SubtitleNorm));
                         }
                         if (match.Index == 0 && versions.Count == 1)
@@ -349,15 +360,26 @@ public partial class MainForm : Form
 
                         // フォルダ名生成
                         var num = match.Index.ToString("000");
-                        var tjaBaseName = Path.GetFileNameWithoutExtension(candidate.Path);
-                        var safeFolderName = SanitizeFolderName(tjaBaseName);
+                        var titleJaForFolder = candidate.Info.FolderTitle;
+                        if (string.IsNullOrWhiteSpace(titleJaForFolder))
+                            titleJaForFolder = Path.GetFileNameWithoutExtension(candidate.Path);
+                        var safeFolderName = SanitizeFolderName(titleJaForFolder);
                         var newFolderName = $"{num} {safeFolderName}";
                         var dstSongDir = Path.Combine(songsRoot, target.Dest, newFolderName);
 
+                        // 競合回避: 同一コピー先は先着1スレッドだけ処理
+                        if (!copyPathClaims.TryAdd(dstSongDir, 0))
+                        {
+                            Interlocked.Increment(ref totalSkipped);
+                            perSongLogs.Add($"skip_claimed\ttarget={target.Dest}\texport={target.Export}\tindex={num}\tdst={dstSongDir}\ttja={candidate.Path}");
+                            break;
+                        }
+
                         // ディレクトリの有無チェックと作成
                         var dstGenreDir = Path.Combine(songsRoot, target.Dest);
-                        if (Directory.Exists(dstSongDir)) {
-                            totalSkipped++;
+                        if (Directory.Exists(dstSongDir))
+                        {
+                            Interlocked.Increment(ref totalSkipped);
                             perSongLogs.Add($"skip_exists\ttarget={target.Dest}\texport={target.Export}\tindex={num}\tdst={dstSongDir}\ttja={candidate.Path}");
                             break;
                         }
@@ -365,7 +387,7 @@ public partial class MainForm : Form
                         EnsureBoxDef(dstGenreDir, target.BoxTitle, target.BoxGenre, target.BoxExplanation);
 
                         CopyDirectory(songDir, dstSongDir, candidate.Path);
-                        totalCopied++;
+                        Interlocked.Increment(ref totalCopied);
                         perSongLogs.Add($"copy\ttarget={target.Dest}\texport={target.Export}\tindex={num}\tdst={dstSongDir}\ttja={candidate.Path}");
                         break; // このカテゴリへのコピーは完了
                     }
@@ -373,8 +395,8 @@ public partial class MainForm : Form
 
                 if (!matchedAnyInFolder)
                 {
-                    totalUnmatched++;
-                    
+                    Interlocked.Increment(ref totalUnmatched);
+
                     // 最も近い候補を探してログに残す（デバッグ用）
                     var first = tjaCandidates[0];
                     var titleNorm = first.TitleNorm;
@@ -401,22 +423,27 @@ public partial class MainForm : Form
                     }
                 }
 
-                detailLogs.AddRange(perSongLogs);
-            }
+                foreach (var line in perSongLogs)
+                    detailLogs.Add(line);
+            });
         }
 
-        detailLogs.Add($"finished_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
-        detailLogs.Add($"summary\tcopied={totalCopied}\tskipped={totalSkipped}\tunmatched={totalUnmatched}");
+        var finalDetailLogs = new List<string>(detailLogPreamble.Count + detailLogs.Count + 2);
+        finalDetailLogs.AddRange(detailLogPreamble);
+        finalDetailLogs.AddRange(detailLogs);
+        finalDetailLogs.Add($"finished_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+        finalDetailLogs.Add($"summary\tcopied={totalCopied}\tskipped={totalSkipped}\tunmatched={totalUnmatched}");
         WriteLogCopies(
-            detailLogs,
+            finalDetailLogs,
             organizeLogPath, organizeLogLatestPath,
             organizeLogPathShared, organizeLogLatestShared,
             organizeLogPathEmergency, organizeLogLatestEmergency);
 
-        if (unmatchedLogs.Count > 0)
+        var unmatchedEntries = unmatchedLogs.ToArray();
+        if (unmatchedEntries.Length > 0)
         {
             WriteLogCopies(
-                unmatchedLogs,
+                unmatchedEntries,
                 unmatchedLogPath, unmatchedLogPathRun, unmatchedLogLatestPath,
                 unmatchedLogPathShared, unmatchedLogLatestShared,
                 unmatchedLogPathEmergency, unmatchedLogLatestEmergency);
@@ -611,7 +638,7 @@ public partial class MainForm : Form
         return result;
     }
 
-    public record SongDetail(string Title, string Subtitle, string? FullTitle);
+    public record SongDetail(string Title, string Subtitle, string? FullTitle, string? FolderTitle);
 
     static SongDetail? ReadSongInfo(string tjaPath)
     {
@@ -667,6 +694,7 @@ public partial class MainForm : Form
         var resTitle = titleJa ?? title;
         if (resTitle == null) return null;
         var fullTitle = resTitle;
+        var folderTitle = !string.IsNullOrWhiteSpace(titleJa) ? titleJa : fullTitle;
 
         var resSubtitle = subtitleJa ?? subtitle ?? string.Empty;
 
@@ -686,7 +714,7 @@ public partial class MainForm : Form
             }
         }
 
-        return new SongDetail(resTitle, resSubtitle, fullTitle);
+        return new SongDetail(resTitle, resSubtitle, fullTitle, folderTitle);
     }
 
     static bool TryExtractInlineSubtitleFromTitle(string title, out string mainTitle, out string inlineSubtitle)
