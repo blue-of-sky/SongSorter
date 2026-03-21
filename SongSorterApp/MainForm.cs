@@ -111,7 +111,7 @@ public partial class MainForm : Form
         int totalCopied = 0;
         int totalSkipped = 0;
         int totalUnmatched = 0;
-        var unmatchedLogs = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var unmatchedLogs = new List<string>();
 
         var mappings = new[]
         {
@@ -127,11 +127,11 @@ public partial class MainForm : Form
 
         var exportGroups = LoadExportIndexes(exportDir);
 
-        Parallel.ForEach(mappings, sourceMap =>
+        foreach (var sourceMap in mappings)
         {
             var srcCatDir = Path.Combine(tempSongsDir, sourceMap.Source);
             if (!Directory.Exists(srcCatDir))
-                return;
+                continue;
 
             var srcCategoryName = sourceMap.Source;
             // 同名曲が複数カテゴリに存在する場合は、元フォルダと同じカテゴリを優先する
@@ -139,7 +139,7 @@ public partial class MainForm : Form
                 .OrderBy(m => string.Equals(m.Source, srcCategoryName, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ToArray();
 
-            Parallel.ForEach(Directory.GetDirectories(srcCatDir), songDir =>
+            foreach (var songDir in Directory.GetDirectories(srcCatDir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
             {
                 var tjaPaths = Directory
                     .GetFiles(songDir, "*.tja", SearchOption.AllDirectories)
@@ -147,9 +147,9 @@ public partial class MainForm : Form
                     .ToArray();
                 if (tjaPaths.Length == 0)
                 {
-                    Interlocked.Increment(ref totalUnmatched);
+                    totalUnmatched++;
                     unmatchedLogs.Add($"[NO_TJA] {songDir}");
-                    return;
+                    continue;
                 }
 
                 var tjaCandidates = new List<(string Path, SongDetail Info, string TitleNorm, string SubtitleNorm)>();
@@ -169,9 +169,9 @@ public partial class MainForm : Form
 
                 if (tjaCandidates.Count == 0)
                 {
-                    Interlocked.Increment(ref totalUnmatched);
+                    totalUnmatched++;
                     unmatchedLogs.Add($"[NO_VALID_TJA] {songDir}");
-                    return;
+                    continue;
                 }
 
                 var matchedAnyInFolder = false;
@@ -210,21 +210,21 @@ public partial class MainForm : Form
                         // ディレクトリの有無チェックと作成
                         var dstGenreDir = Path.Combine(songsRoot, target.Dest);
                         if (Directory.Exists(dstSongDir)) {
-                            Interlocked.Increment(ref totalSkipped);
+                            totalSkipped++;
                             break;
                         }
 
                         EnsureBoxDef(dstGenreDir, target.BoxTitle, target.BoxGenre, target.BoxExplanation);
 
                         CopyDirectory(songDir, dstSongDir, candidate.Path);
-                        Interlocked.Increment(ref totalCopied);
+                        totalCopied++;
                         break; // このカテゴリへのコピーは完了
                     }
                 }
 
                 if (!matchedAnyInFolder)
                 {
-                    Interlocked.Increment(ref totalUnmatched);
+                    totalUnmatched++;
                     
                     // 最も近い候補を探してログに残す（デバッグ用）
                     var first = tjaCandidates[0];
@@ -244,10 +244,10 @@ public partial class MainForm : Form
                         unmatchedLogs.Add($"[TITLE_NOT_FOUND] {songDir} (タイトル [{titleNorm}] (Hex: {ToHex(titleNorm)}) 自体が見つかりません)");
                     }
                 }
-            });
-        });
+            }
+        }
 
-        if (!unmatchedLogs.IsEmpty)
+        if (unmatchedLogs.Count > 0)
         {
             var logPath = Path.Combine(exportDir, "log.txt");
             File.WriteAllLines(logPath, unmatchedLogs, Encoding.UTF8);
@@ -302,55 +302,77 @@ public partial class MainForm : Form
 
     static SongDetail? ReadSongInfo(string tjaPath)
     {
-        try
+        const int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            // まずは UTF-8 (BOMあり/なし両対応) で読み込んでみる
-            var lines = File.ReadAllLines(tjaPath, Encoding.UTF8);
-            
-            // UTF-8 で読み込んだ際に「」(U+FFFD) が含まれている場合、または
-            // 日本語が含まれているはずなのに UTF-8 として不正なバイトシーケンスだった場合、
-            // Shift-JIS (CP932) として再読み込みを試行する
-            if (lines.Any(l => l.Contains('\uFFFD')))
+            try
             {
-                lines = File.ReadAllLines(tjaPath, Encoding.GetEncoding(932));
+                return ReadSongInfoCore(tjaPath);
             }
-            
-            string? title = null, titleJa = null;
-            string? subtitle = null, subtitleJa = null;
-            
-            foreach (var rawLine in lines)
+            catch (IOException) when (attempt < maxAttempts)
             {
-                var line = rawLine.Trim();
-                if (line.StartsWith("TITLEJA:", StringComparison.OrdinalIgnoreCase)) titleJa = line["TITLEJA:".Length..].Trim();
-                else if (line.StartsWith("TITLE:", StringComparison.OrdinalIgnoreCase)) title = line["TITLE:".Length..].Trim();
-                else if (line.StartsWith("SUBTITLEJA:", StringComparison.OrdinalIgnoreCase)) subtitleJa = line["SUBTITLEJA:".Length..].Trim();
-                else if (line.StartsWith("SUBTITLE:", StringComparison.OrdinalIgnoreCase)) subtitle = line["SUBTITLE:".Length..].Trim();
+                Thread.Sleep(20 * attempt);
             }
-            
-            var resTitle = titleJa ?? title;
-            if (resTitle == null) return null;
-
-            var resSubtitle = subtitleJa ?? subtitle ?? string.Empty;
-
-            // TITLEに「曲名 ～サブタイトル～」形式で入っているケースを補正
-            // 例: 「白鳥の湖 ～still a duckling～」
-            if (TryExtractInlineSubtitleFromTitle(resTitle, out var mainTitle, out var inlineSubtitle))
+            catch (UnauthorizedAccessException) when (attempt < maxAttempts)
             {
-                resTitle = mainTitle;
-
-                // TJAのSUBTITLEが "--" / "++" で始まる場合は作曲者クレジットであることが多いので、
-                // 曲照合にはTITLE由来のサブタイトルを優先する
-                if (string.IsNullOrWhiteSpace(resSubtitle)
-                    || resSubtitle.StartsWith("--", StringComparison.Ordinal)
-                    || resSubtitle.StartsWith("++", StringComparison.Ordinal))
-                {
-                    resSubtitle = inlineSubtitle;
-                }
+                Thread.Sleep(20 * attempt);
             }
-
-            return new SongDetail(resTitle, resSubtitle);
+            catch
+            {
+                return null;
+            }
         }
-        catch { return null; }
+
+        return null;
+    }
+
+    static SongDetail? ReadSongInfoCore(string tjaPath)
+    {
+        // まずは UTF-8 (BOMあり/なし両対応) で読み込んでみる
+        var lines = File.ReadAllLines(tjaPath, Encoding.UTF8);
+        
+        // UTF-8 で読み込んだ際に「」(U+FFFD) が含まれている場合、または
+        // 日本語が含まれているはずなのに UTF-8 として不正なバイトシーケンスだった場合、
+        // Shift-JIS (CP932) として再読み込みを試行する
+        if (lines.Any(l => l.Contains('\uFFFD')))
+        {
+            lines = File.ReadAllLines(tjaPath, Encoding.GetEncoding(932));
+        }
+        
+        string? title = null, titleJa = null;
+        string? subtitle = null, subtitleJa = null;
+        
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (line.StartsWith("TITLEJA:", StringComparison.OrdinalIgnoreCase)) titleJa = line["TITLEJA:".Length..].Trim();
+            else if (line.StartsWith("TITLE:", StringComparison.OrdinalIgnoreCase)) title = line["TITLE:".Length..].Trim();
+            else if (line.StartsWith("SUBTITLEJA:", StringComparison.OrdinalIgnoreCase)) subtitleJa = line["SUBTITLEJA:".Length..].Trim();
+            else if (line.StartsWith("SUBTITLE:", StringComparison.OrdinalIgnoreCase)) subtitle = line["SUBTITLE:".Length..].Trim();
+        }
+        
+        var resTitle = titleJa ?? title;
+        if (resTitle == null) return null;
+
+        var resSubtitle = subtitleJa ?? subtitle ?? string.Empty;
+
+        // TITLEに「曲名 ～サブタイトル～」形式で入っているケースを補正
+        // 例: 「白鳥の湖 ～still a duckling～」
+        if (TryExtractInlineSubtitleFromTitle(resTitle, out var mainTitle, out var inlineSubtitle))
+        {
+            resTitle = mainTitle;
+
+            // TJAのSUBTITLEが "--" / "++" で始まる場合は作曲者クレジットであることが多いので、
+            // 曲照合にはTITLE由来のサブタイトルを優先する
+            if (string.IsNullOrWhiteSpace(resSubtitle)
+                || resSubtitle.StartsWith("--", StringComparison.Ordinal)
+                || resSubtitle.StartsWith("++", StringComparison.Ordinal))
+            {
+                resSubtitle = inlineSubtitle;
+            }
+        }
+
+        return new SongDetail(resTitle, resSubtitle);
     }
 
     static bool TryExtractInlineSubtitleFromTitle(string title, out string mainTitle, out string inlineSubtitle)
