@@ -137,7 +137,10 @@ public partial class MainForm : Form
 
             Parallel.ForEach(Directory.GetDirectories(srcCatDir), songDir =>
             {
-                var tjaPaths = Directory.GetFiles(songDir, "*.tja", SearchOption.AllDirectories);
+                var tjaPaths = Directory
+                    .GetFiles(songDir, "*.tja", SearchOption.AllDirectories)
+                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
                 if (tjaPaths.Length == 0)
                 {
                     Interlocked.Increment(ref totalUnmatched);
@@ -154,6 +157,7 @@ public partial class MainForm : Form
                     var titleNorm = NormalizationUtils.NormalizeTitle(info.Title);
                     var subtitleNorm = NormalizationUtils.NormalizeSubtitle(info.Subtitle);
 
+                    var matchedThisTja = false;
                     foreach (var target in preferredMappings)
                     {
                         if (!exportGroups.TryGetValue(target.Export, out var songsByTitle))
@@ -175,6 +179,7 @@ public partial class MainForm : Form
                         }
 
                         if (match.Index == 0) continue;
+                        matchedThisTja = true;
 
                         // フォルダ名生成
                         var num = match.Index.ToString("000");
@@ -197,6 +202,12 @@ public partial class MainForm : Form
                         CopyDirectory(songDir, dstSongDir, tjaPath);
                         Interlocked.Increment(ref totalCopied);
                         break; // このTJAのマッチングは完了
+                    }
+
+                    if (matchedThisTja)
+                    {
+                        // 1曲フォルダにつき1つのTJAだけを採用して終了する
+                        break;
                     }
                 }
 
