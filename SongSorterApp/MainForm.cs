@@ -23,10 +23,12 @@ public partial class MainForm : Form
         var totalCats = SongListFetcher.Categories.Length;
         SetStatus("曲リスト取得中…", showProgress: true, progressStyle: ProgressBarStyle.Blocks, progressMax: totalCats, progressValue: 0);
 
-        var tasks = SongListFetcher.Categories.Select(async cat =>
+        int done = 0;
+        foreach (var cat in SongListFetcher.Categories)
         {
-            var songs = await SongListFetcher.FetchSongsAsync(cat.FileName);
-            if (songs.Count == 0) return (0, 0);
+            var songs = await FetchSongsWithRetryAsync(cat.DisplayName, cat.FileName);
+            if (songs.Count == 0)
+                throw new InvalidOperationException($"カテゴリ「{cat.DisplayName}」の取得結果が 0 件のため中断しました。");
 
             var fileName = $"songlist_{cat.DisplayName}.txt";
             var filePath = Path.Combine(exportDir, fileName);
@@ -34,18 +36,45 @@ public partial class MainForm : Form
                 $"{i + 1:000}\t{SanitizeTsvCell(s.Title)}\t{SanitizeTsvCell(s.Subtitle)}");
             await File.WriteAllLinesAsync(filePath, outputLines, Encoding.UTF8);
 
-            return (1, songs.Count);
-        });
+            fileCount++;
+            totalTitles += songs.Count;
 
-        var results = await Task.WhenAll(tasks);
-        foreach (var (f, t) in results)
-        {
-            fileCount += f;
-            totalTitles += t;
+            done++;
+            SetStatus($"曲リスト取得中… ({cat.DisplayName})", showProgress: true,
+                progressStyle: ProgressBarStyle.Blocks, progressMax: totalCats, progressValue: done);
         }
 
         SetStatus($"曲リスト取得完了（{fileCount} 件 / {totalTitles} 曲）", showProgress: false);
         return (fileCount, totalTitles);
+    }
+
+    static async Task<List<SongInfo>> FetchSongsWithRetryAsync(string displayName, string fileName, int maxAttempts = 3)
+    {
+        Exception? lastError = null;
+        List<SongInfo>? lastSongs = null;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                var songs = await SongListFetcher.FetchSongsAsync(fileName);
+                if (songs.Count > 0)
+                    return songs;
+                lastSongs = songs;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+
+            if (attempt < maxAttempts)
+                await Task.Delay(400 * attempt);
+        }
+
+        if (lastError != null)
+            throw new InvalidOperationException($"カテゴリ「{displayName}」の取得に失敗しました。", lastError);
+
+        return lastSongs ?? new List<SongInfo>();
     }
 
     async void btnOrganize_Click(object? sender, EventArgs e)
