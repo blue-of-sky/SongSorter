@@ -11,11 +11,18 @@ public partial class MainForm : Form
         SetStatus("準備完了", showProgress: false);
     }
 
-    async Task<(int fileCount, int totalTitles)> ExportSongListsAsync()
+    async Task<(int fileCount, int totalTitles)> ExportSongListsAsync(string runId)
     {
         var exeDir = Path.GetDirectoryName(Application.ExecutablePath) ?? ".";
         var exportDir = Path.Combine(exeDir, "Export");
         Directory.CreateDirectory(exportDir);
+        var fetchLogPath = Path.Combine(exportDir, $"fetch_{runId}.log");
+        var fetchLogs = new List<string>
+        {
+            $"run_id={runId}",
+            $"started_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}",
+            $"export_dir={exportDir}"
+        };
 
         int fileCount = 0;
         int totalTitles = 0;
@@ -26,7 +33,7 @@ public partial class MainForm : Form
         int done = 0;
         foreach (var cat in SongListFetcher.Categories)
         {
-            var songs = await FetchSongsWithRetryAsync(cat.DisplayName, cat.FileName);
+            var (songs, attempt) = await FetchSongsWithRetryAsync(cat.DisplayName, cat.FileName);
             if (songs.Count == 0)
                 throw new InvalidOperationException($"カテゴリ「{cat.DisplayName}」の取得結果が 0 件のため中断しました。");
 
@@ -38,17 +45,22 @@ public partial class MainForm : Form
 
             fileCount++;
             totalTitles += songs.Count;
+            fetchLogs.Add($"category={cat.DisplayName}\tfile={cat.FileName}\tattempt={attempt}\tcount={songs.Count}\tpath={filePath}");
 
             done++;
             SetStatus($"曲リスト取得中… ({cat.DisplayName})", showProgress: true,
                 progressStyle: ProgressBarStyle.Blocks, progressMax: totalCats, progressValue: done);
         }
 
+        fetchLogs.Add($"finished_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+        fetchLogs.Add($"summary\tfiles={fileCount}\ttitles={totalTitles}");
+        File.WriteAllLines(fetchLogPath, fetchLogs, Encoding.UTF8);
+
         SetStatus($"曲リスト取得完了（{fileCount} 件 / {totalTitles} 曲）", showProgress: false);
         return (fileCount, totalTitles);
     }
 
-    static async Task<List<SongInfo>> FetchSongsWithRetryAsync(string displayName, string fileName, int maxAttempts = 3)
+    static async Task<(List<SongInfo> songs, int usedAttempt)> FetchSongsWithRetryAsync(string displayName, string fileName, int maxAttempts = 3)
     {
         Exception? lastError = null;
         List<SongInfo>? lastSongs = null;
@@ -59,7 +71,7 @@ public partial class MainForm : Form
             {
                 var songs = await SongListFetcher.FetchSongsAsync(fileName);
                 if (songs.Count > 0)
-                    return songs;
+                    return (songs, attempt);
                 lastSongs = songs;
             }
             catch (Exception ex)
@@ -74,7 +86,7 @@ public partial class MainForm : Form
         if (lastError != null)
             throw new InvalidOperationException($"カテゴリ「{displayName}」の取得に失敗しました。", lastError);
 
-        return lastSongs ?? new List<SongInfo>();
+        return (lastSongs ?? new List<SongInfo>(), maxAttempts);
     }
 
     async void btnOrganize_Click(object? sender, EventArgs e)
@@ -107,10 +119,11 @@ public partial class MainForm : Form
         btnOrganize.Enabled = false;
         try
         {
-            await ExportSongListsAsync();
+            var runId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            await ExportSongListsAsync(runId);
 
             SetStatus("Songs フォルダへコピー中…", showProgress: true, progressStyle: ProgressBarStyle.Marquee);
-            var summary = await Task.Run(() => OrganizeSongs(tempSongsDir, destRootDir));
+            var summary = await Task.Run(() => OrganizeSongs(tempSongsDir, destRootDir, runId));
             SetStatus(summary, showProgress: false);
         }
         catch (Exception ex)
@@ -124,7 +137,7 @@ public partial class MainForm : Form
         }
     }
 
-    static string OrganizeSongs(string tempSongsDir, string destRootDir)
+    static string OrganizeSongs(string tempSongsDir, string destRootDir, string runId)
     {
         var exeDir = Path.GetDirectoryName(Application.ExecutablePath) ?? ".";
         var exportDir = Path.Combine(exeDir, "Export");
@@ -136,6 +149,15 @@ public partial class MainForm : Form
 
         var songsRoot = ResolveSongsRoot(destRootDir);
         Directory.CreateDirectory(songsRoot);
+        var organizeLogPath = Path.Combine(exportDir, $"organize_{runId}.log");
+        var detailLogs = new List<string>
+        {
+            $"run_id={runId}",
+            $"started_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}",
+            $"temp_songs_dir={tempSongsDir}",
+            $"dest_root_dir={destRootDir}",
+            $"resolved_songs_root={songsRoot}"
+        };
 
         int totalCopied = 0;
         int totalSkipped = 0;
@@ -155,21 +177,33 @@ public partial class MainForm : Form
         };
 
         var exportGroups = LoadExportIndexes(exportDir);
+        foreach (var map in mappings)
+        {
+            var count = exportGroups.TryGetValue(map.Export, out var songsByTitle)
+                ? songsByTitle.Sum(x => x.Value.Count)
+                : 0;
+            detailLogs.Add($"export_index\tcategory={map.Export}\tentries={count}");
+        }
 
         foreach (var sourceMap in mappings)
         {
             var srcCatDir = Path.Combine(tempSongsDir, sourceMap.Source);
             if (!Directory.Exists(srcCatDir))
+            {
+                detailLogs.Add($"source_missing\tcategory={sourceMap.Source}\tpath={srcCatDir}");
                 continue;
+            }
 
             var srcCategoryName = sourceMap.Source;
             // 同名曲が複数カテゴリに存在する場合は、元フォルダと同じカテゴリを優先する
             var preferredMappings = mappings
                 .OrderBy(m => string.Equals(m.Source, srcCategoryName, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ToArray();
+            detailLogs.Add($"source_begin\tcategory={srcCategoryName}\tsong_dirs={Directory.GetDirectories(srcCatDir).Length}");
 
             foreach (var songDir in Directory.GetDirectories(srcCatDir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
             {
+                var perSongLogs = new List<string>();
                 var tjaPaths = Directory
                     .GetFiles(songDir, "*.tja", SearchOption.AllDirectories)
                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
@@ -178,6 +212,7 @@ public partial class MainForm : Form
                 {
                     totalUnmatched++;
                     unmatchedLogs.Add($"[NO_TJA] {songDir}");
+                    detailLogs.Add($"song_no_tja\tsource={srcCategoryName}\tsong_dir={songDir}");
                     continue;
                 }
 
@@ -195,11 +230,18 @@ public partial class MainForm : Form
                         NormalizationUtils.NormalizeSubtitle(info.Subtitle)
                     ));
                 }
+                perSongLogs.Add($"song_begin\tsource={srcCategoryName}\tsong_dir={songDir}\ttja_paths={tjaPaths.Length}\tvalid_tja={tjaCandidates.Count}");
+                foreach (var c in tjaCandidates)
+                {
+                    perSongLogs.Add($"candidate\ttja={c.Path}\ttitle={SanitizeLogText(c.Info.Title)}\tsub={SanitizeLogText(c.Info.Subtitle)}\ttitle_norm={c.TitleNorm}\tsub_norm={c.SubtitleNorm}");
+                }
 
                 if (tjaCandidates.Count == 0)
                 {
                     totalUnmatched++;
                     unmatchedLogs.Add($"[NO_VALID_TJA] {songDir}");
+                    detailLogs.AddRange(perSongLogs);
+                    detailLogs.Add($"song_no_valid_tja\tsource={srcCategoryName}\tsong_dir={songDir}");
                     continue;
                 }
 
@@ -240,6 +282,7 @@ public partial class MainForm : Form
                         var dstGenreDir = Path.Combine(songsRoot, target.Dest);
                         if (Directory.Exists(dstSongDir)) {
                             totalSkipped++;
+                            perSongLogs.Add($"skip_exists\ttarget={target.Dest}\texport={target.Export}\tindex={num}\tdst={dstSongDir}\ttja={candidate.Path}");
                             break;
                         }
 
@@ -247,6 +290,7 @@ public partial class MainForm : Form
 
                         CopyDirectory(songDir, dstSongDir, candidate.Path);
                         totalCopied++;
+                        perSongLogs.Add($"copy\ttarget={target.Dest}\texport={target.Export}\tindex={num}\tdst={dstSongDir}\ttja={candidate.Path}");
                         break; // このカテゴリへのコピーは完了
                     }
                 }
@@ -267,14 +311,22 @@ public partial class MainForm : Form
                     {
                         var tjaSub = first.SubtitleNorm;
                         unmatchedLogs.Add($"[SUBTITLE_MISMATCH] {songDir} (タイトル一致: [{titleNorm}] \n Web側候補: {string.Join(", ", candidates.Select(c => $"[{c}] (Hex: {ToHex(c)})"))} \n TJA側: [{tjaSub}] (Hex: {ToHex(tjaSub)}))");
+                        perSongLogs.Add($"unmatched_subtitle\ttitle_norm={titleNorm}\ttja_sub_norm={tjaSub}\tcandidate_count={candidates.Count}");
                     }
                     else
                     {
                         unmatchedLogs.Add($"[TITLE_NOT_FOUND] {songDir} (タイトル [{titleNorm}] (Hex: {ToHex(titleNorm)}) 自体が見つかりません)");
+                        perSongLogs.Add($"unmatched_title\ttitle_norm={titleNorm}");
                     }
                 }
+
+                detailLogs.AddRange(perSongLogs);
             }
         }
+
+        detailLogs.Add($"finished_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+        detailLogs.Add($"summary\tcopied={totalCopied}\tskipped={totalSkipped}\tunmatched={totalUnmatched}");
+        File.WriteAllLines(organizeLogPath, detailLogs, Encoding.UTF8);
 
         if (unmatchedLogs.Count > 0)
         {
@@ -282,10 +334,11 @@ public partial class MainForm : Form
             File.WriteAllLines(logPath, unmatchedLogs, Encoding.UTF8);
         }
 
-        return $"コピー完了: {totalCopied} 曲 / 既設: {totalSkipped} 曲 (未マッチ {totalUnmatched} 件 / log.txt を確認してください)";
+        return $"コピー完了: {totalCopied} 曲 / 既設: {totalSkipped} 曲 (未マッチ {totalUnmatched} 件 / log.txt と organize_{runId}.log を確認してください)";
     }
 
     static string ToHex(string s) => string.Join("", s.Select(c => $"{(int)c:X4}"));
+    static string SanitizeLogText(string? s) => (s ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
 
     static Dictionary<string, Dictionary<string, List<(string SubtitleNorm, int Index)>>> LoadExportIndexes(string exportDir)
     {
