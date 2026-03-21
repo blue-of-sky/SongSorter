@@ -127,9 +127,13 @@ public partial class MainForm : Form
 
         var exportGroups = LoadExportIndexes(exportDir);
 
-        Parallel.ForEach(Directory.GetDirectories(tempSongsDir), srcCatDir =>
+        Parallel.ForEach(mappings, sourceMap =>
         {
-            var srcCategoryName = Path.GetFileName(srcCatDir);
+            var srcCatDir = Path.Combine(tempSongsDir, sourceMap.Source);
+            if (!Directory.Exists(srcCatDir))
+                return;
+
+            var srcCategoryName = sourceMap.Source;
             // 同名曲が複数カテゴリに存在する場合は、元フォルダと同じカテゴリを優先する
             var preferredMappings = mappings
                 .OrderBy(m => string.Equals(m.Source, srcCategoryName, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
