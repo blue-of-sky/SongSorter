@@ -5,6 +5,20 @@ namespace SongSorterApp;
 
 public static class NormalizationUtils
 {
+    static readonly Dictionary<string, string[]> _titleAliases = BuildTitleAliases();
+    static readonly string[] _titlePrefixesToStrip = { "双打" };
+    static readonly string[] _titleSuffixesToStrip =
+    {
+        "NEWAUDIO",
+        "OLDAUDIO",
+        "BEENAVERSION",
+        "SHORTVERSION",
+        "LONGVERSION",
+        "COVERVERSION",
+        "TVXQVERSION",
+        "初代"
+    };
+
     public static string NormalizeTitle(string? s)
     {
         if (string.IsNullOrWhiteSpace(s)) return string.Empty;
@@ -17,7 +31,7 @@ public static class NormalizationUtils
             // 全角英数字 (0xFF01-0xFF5E) -> 半角 (0x0021-0x007E)
             if (work >= 0xFF01 && work <= 0xFF5E)
                 work = (char)(work - 0xFEE0);
-            
+
             // アポストロフィ系の表記ゆれを統一
             // 例: ' ’ ‘ ′ ‵ ʼ ＇
             if ("'’‘′‵ʼ＇".Contains(work)) work = '\'';
@@ -40,10 +54,44 @@ public static class NormalizationUtils
             if (char.IsWhiteSpace(work) || char.IsControl(work)) continue;
 
             if (IsIgnorableSymbolOrPunctuation(work)) continue;
-            
+
             sb.Append(work);
         }
         return sb.ToString().ToUpperInvariant();
+    }
+
+    public static IEnumerable<string> ExpandTitleMatchKeys(string normalizedTitle)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedTitle))
+            yield break;
+
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+        queue.Enqueue(normalizedTitle);
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (!visited.Add(current))
+                continue;
+
+            yield return current;
+
+            if (_titleAliases.TryGetValue(current, out var aliases))
+            {
+                foreach (var alias in aliases)
+                {
+                    if (!string.IsNullOrWhiteSpace(alias) && !visited.Contains(alias))
+                        queue.Enqueue(alias);
+                }
+            }
+
+            foreach (var variant in GetHeuristicVariants(current))
+            {
+                if (!string.IsNullOrWhiteSpace(variant) && !visited.Contains(variant))
+                    queue.Enqueue(variant);
+            }
+        }
     }
 
     public static string NormalizeSubtitle(string? s)
@@ -74,5 +122,161 @@ public static class NormalizationUtils
             or UnicodeCategory.CurrencySymbol
             or UnicodeCategory.ModifierSymbol
             or UnicodeCategory.OtherSymbol;
+    }
+
+    static Dictionary<string, string[]> BuildTitleAliases()
+    {
+        var work = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+        // 意味が変わる改題系のみ明示的に保持（通常の表記ゆれは自動吸収ロジックで対応）
+        AddAliasPair(work, "自力本願レボリューション", "THE REVO");
+        AddAliasPair(work, "スパート！", "スパートシンドローマー");
+        AddAliasPair(work, "天使と悪魔", "カーマイン");
+
+        return work.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value.ToArray(),
+            StringComparer.Ordinal);
+    }
+
+    static void AddAliasPair(Dictionary<string, HashSet<string>> map, string a, string b)
+    {
+        var na = NormalizeTitle(a);
+        var nb = NormalizeTitle(b);
+        if (string.IsNullOrWhiteSpace(na) || string.IsNullOrWhiteSpace(nb) || na == nb)
+            return;
+
+        if (!map.TryGetValue(na, out var setA))
+        {
+            setA = new HashSet<string>(StringComparer.Ordinal);
+            map[na] = setA;
+        }
+        setA.Add(nb);
+
+        if (!map.TryGetValue(nb, out var setB))
+        {
+            setB = new HashSet<string>(StringComparer.Ordinal);
+            map[nb] = setB;
+        }
+        setB.Add(na);
+    }
+
+    static IEnumerable<string> GetHeuristicVariants(string normalizedTitle)
+    {
+        var folded = FoldLatinDiacritics(normalizedTitle);
+        if (!string.Equals(folded, normalizedTitle, StringComparison.Ordinal))
+            yield return folded;
+
+        var noPrefix = StripKnownPrefixes(normalizedTitle);
+        if (!string.Equals(noPrefix, normalizedTitle, StringComparison.Ordinal))
+            yield return noPrefix;
+
+        var noSuffix = StripKnownSuffixes(normalizedTitle);
+        if (!string.Equals(noSuffix, normalizedTitle, StringComparison.Ordinal))
+            yield return noSuffix;
+
+        var noSuffixNoPrefix = StripKnownPrefixes(noSuffix);
+        if (!string.Equals(noSuffixNoPrefix, normalizedTitle, StringComparison.Ordinal)
+            && !string.Equals(noSuffixNoPrefix, noSuffix, StringComparison.Ordinal))
+            yield return noSuffixNoPrefix;
+
+        var noFeat = StripAfterKeyword(normalizedTitle, "FEAT");
+        if (!string.Equals(noFeat, normalizedTitle, StringComparison.Ordinal))
+            yield return noFeat;
+
+        if (!string.Equals(folded, normalizedTitle, StringComparison.Ordinal))
+        {
+            var foldedNoSuffix = StripKnownSuffixes(folded);
+            if (!string.Equals(foldedNoSuffix, folded, StringComparison.Ordinal))
+                yield return foldedNoSuffix;
+        }
+    }
+
+    static string StripKnownPrefixes(string value)
+    {
+        var work = value;
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var prefix in _titlePrefixesToStrip)
+            {
+                if (work.StartsWith(prefix, StringComparison.Ordinal) && work.Length > prefix.Length + 1)
+                {
+                    work = work[prefix.Length..];
+                    changed = true;
+                    break;
+                }
+            }
+        }
+
+        return work;
+    }
+
+    static string StripKnownSuffixes(string value)
+    {
+        var work = value;
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var suffix in _titleSuffixesToStrip)
+            {
+                if (work.EndsWith(suffix, StringComparison.Ordinal) && work.Length > suffix.Length + 1)
+                {
+                    work = work[..^suffix.Length];
+                    changed = true;
+                    break;
+                }
+            }
+        }
+
+        return work;
+    }
+
+    static string StripAfterKeyword(string value, string keyword)
+    {
+        var idx = value.IndexOf(keyword, StringComparison.Ordinal);
+        if (idx <= 0)
+            return value;
+
+        var trimmed = value[..idx];
+        return trimmed.Length >= 3 ? trimmed : value;
+    }
+
+    static string FoldLatinDiacritics(string value)
+    {
+        var sb = new StringBuilder(value.Length);
+        foreach (var c in value)
+        {
+            if (!IsLatinRange(c))
+            {
+                sb.Append(c);
+                continue;
+            }
+
+            var decomp = c.ToString().Normalize(NormalizationForm.FormD);
+            var appended = false;
+            foreach (var d in decomp)
+            {
+                if (CharUnicodeInfo.GetUnicodeCategory(d) == UnicodeCategory.NonSpacingMark)
+                    continue;
+                sb.Append(d);
+                appended = true;
+            }
+
+            if (!appended)
+                sb.Append(c);
+        }
+
+        return sb.ToString();
+    }
+
+    static bool IsLatinRange(char c)
+    {
+        return (c >= 'A' && c <= 'Z')
+            || (c >= 'a' && c <= 'z')
+            || (c >= '\u00C0' && c <= '\u024F')
+            || (c >= '\u1E00' && c <= '\u1EFF');
     }
 }

@@ -17,6 +17,7 @@ public partial class MainForm : Form
         var exportDir = Path.Combine(exeDir, "Export");
         Directory.CreateDirectory(exportDir);
         var fetchLogPath = Path.Combine(exportDir, $"fetch_{runId}.log");
+        var fetchLogLatestPath = Path.Combine(exportDir, "fetch_latest.log");
         var sharedLogsDir = GetSharedLogsDir();
         var fetchLogPathShared = Path.Combine(sharedLogsDir, $"fetch_{runId}.log");
         var fetchLogLatestShared = Path.Combine(sharedLogsDir, "fetch_latest.log");
@@ -62,7 +63,11 @@ public partial class MainForm : Form
 
         fetchLogs.Add($"finished_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
         fetchLogs.Add($"summary\tfiles={fileCount}\ttitles={totalTitles}");
-        WriteLogCopies(fetchLogs, fetchLogPath, fetchLogPathShared, fetchLogLatestShared, fetchLogPathEmergency, fetchLogLatestEmergency);
+        WriteLogCopies(
+            fetchLogs,
+            fetchLogPath, fetchLogLatestPath,
+            fetchLogPathShared, fetchLogLatestShared,
+            fetchLogPathEmergency, fetchLogLatestEmergency);
 
         SetStatus($"曲リスト取得完了（{fileCount} 件 / {totalTitles} 曲）", showProgress: false);
         return (fileCount, totalTitles);
@@ -128,12 +133,25 @@ public partial class MainForm : Form
         try
         {
             var runId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            TryWriteEmergencyLog($"run_{runId}_started.log", new[]
+            var exeDir = Path.GetDirectoryName(Application.ExecutablePath) ?? ".";
+            var exportDir = Path.Combine(exeDir, "Export");
+            Directory.CreateDirectory(exportDir);
+            var sharedLogsDir = GetSharedLogsDir();
+            var emergencyLogsDir = GetEmergencyLogsDir();
+            var runStartLog = new[]
             {
                 $"run_id={runId}",
                 $"started_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}",
                 $"exe={Application.ExecutablePath}"
-            });
+            };
+            WriteLogCopies(
+                runStartLog,
+                Path.Combine(exportDir, $"run_{runId}_started.log"),
+                Path.Combine(exportDir, "run_latest_started.log"),
+                Path.Combine(sharedLogsDir, $"run_{runId}_started.log"),
+                Path.Combine(sharedLogsDir, "run_latest_started.log"),
+                Path.Combine(emergencyLogsDir, $"run_{runId}_started.log"),
+                Path.Combine(emergencyLogsDir, "run_latest_started.log"));
             await ExportSongListsAsync(runId);
 
             SetStatus("Songs フォルダへコピー中…", showProgress: true, progressStyle: ProgressBarStyle.Marquee);
@@ -164,12 +182,15 @@ public partial class MainForm : Form
         var songsRoot = ResolveSongsRoot(destRootDir);
         Directory.CreateDirectory(songsRoot);
         var organizeLogPath = Path.Combine(exportDir, $"organize_{runId}.log");
+        var organizeLogLatestPath = Path.Combine(exportDir, "organize_latest.log");
         var sharedLogsDir = GetSharedLogsDir();
         var organizeLogPathShared = Path.Combine(sharedLogsDir, $"organize_{runId}.log");
         var organizeLogLatestShared = Path.Combine(sharedLogsDir, "organize_latest.log");
         var emergencyLogsDir = GetEmergencyLogsDir();
         var organizeLogPathEmergency = Path.Combine(emergencyLogsDir, $"organize_{runId}.log");
         var organizeLogLatestEmergency = Path.Combine(emergencyLogsDir, "organize_latest.log");
+        var unmatchedLogPathRun = Path.Combine(exportDir, $"unmatched_{runId}.log");
+        var unmatchedLogLatestPath = Path.Combine(exportDir, "unmatched_latest.log");
         var unmatchedLogPath = Path.Combine(exportDir, "log.txt");
         var unmatchedLogPathShared = Path.Combine(sharedLogsDir, $"unmatched_{runId}.log");
         var unmatchedLogLatestShared = Path.Combine(sharedLogsDir, "unmatched_latest.log");
@@ -243,7 +264,7 @@ public partial class MainForm : Form
                     continue;
                 }
 
-                var tjaCandidates = new List<(string Path, SongDetail Info, string TitleNorm, string SubtitleNorm)>();
+                var tjaCandidates = new List<(string Path, SongDetail Info, string TitleNorm, string SubtitleNorm, string FullTitleNorm)>();
                 foreach (var path in tjaPaths)
                 {
                     var info = ReadSongInfo(path);
@@ -254,13 +275,14 @@ public partial class MainForm : Form
                         path,
                         info,
                         NormalizationUtils.NormalizeTitle(info.Title),
-                        NormalizationUtils.NormalizeSubtitle(info.Subtitle)
+                        NormalizationUtils.NormalizeSubtitle(info.Subtitle),
+                        NormalizationUtils.NormalizeTitle(info.FullTitle ?? info.Title)
                     ));
                 }
                 perSongLogs.Add($"song_begin\tsource={srcCategoryName}\tsong_dir={songDir}\ttja_paths={tjaPaths.Length}\tvalid_tja={tjaCandidates.Count}");
                 foreach (var c in tjaCandidates)
                 {
-                    perSongLogs.Add($"candidate\ttja={c.Path}\ttitle={SanitizeLogText(c.Info.Title)}\tsub={SanitizeLogText(c.Info.Subtitle)}\ttitle_norm={c.TitleNorm}\tsub_norm={c.SubtitleNorm}");
+                    perSongLogs.Add($"candidate\ttja={c.Path}\ttitle={SanitizeLogText(c.Info.Title)}\tsub={SanitizeLogText(c.Info.Subtitle)}\ttitle_norm={c.TitleNorm}\tfull_title_norm={c.FullTitleNorm}\tsub_norm={c.SubtitleNorm}");
                 }
 
                 if (tjaCandidates.Count == 0)
@@ -280,8 +302,35 @@ public partial class MainForm : Form
 
                     foreach (var candidate in tjaCandidates)
                     {
-                        if (!songsByTitle.TryGetValue(candidate.TitleNorm, out var versions))
+                        List<(string SubtitleNorm, int Index)>? versions = null;
+                        string? matchedTitleKey = null;
+                        var lookupKeys = BuildTitleLookupKeys(candidate.TitleNorm, candidate.SubtitleNorm, candidate.FullTitleNorm);
+                        foreach (var titleKey in lookupKeys)
+                        {
+                            if (songsByTitle.TryGetValue(titleKey, out var found))
+                            {
+                                versions = found;
+                                matchedTitleKey = titleKey;
+                                break;
+                            }
+                        }
+
+                        if (versions == null)
+                        {
+                            var looseKey = FindLooseTitleMatchKey(songsByTitle, lookupKeys);
+                            if (looseKey != null && songsByTitle.TryGetValue(looseKey, out var looseFound))
+                            {
+                                versions = looseFound;
+                                matchedTitleKey = looseKey;
+                                perSongLogs.Add($"title_loose_match\tcandidate={candidate.TitleNorm}\tresolved={looseKey}");
+                            }
+                        }
+
+                        if (versions == null)
                             continue;
+
+                        if (!string.Equals(matchedTitleKey, candidate.TitleNorm, StringComparison.Ordinal))
+                            perSongLogs.Add($"title_alias_match\tcandidate={candidate.TitleNorm}\tresolved={matchedTitleKey}");
 
                         // マッチングロジック (完全一致 -> 部分一致 -> タイトルのみ一致)
                         var match = versions.FirstOrDefault(v => v.SubtitleNorm == candidate.SubtitleNorm);
@@ -329,9 +378,14 @@ public partial class MainForm : Form
                     // 最も近い候補を探してログに残す（デバッグ用）
                     var first = tjaCandidates[0];
                     var titleNorm = first.TitleNorm;
+                    var titleNormKeys = BuildTitleLookupKeys(first.TitleNorm, first.SubtitleNorm, first.FullTitleNorm);
                     var candidates = exportGroups.Values
-                        .SelectMany(g => g.TryGetValue(titleNorm, out var v) ? v : Enumerable.Empty<(string Sub, int Idx)>())
+                        .SelectMany(g => titleNormKeys
+                            .SelectMany(key => g.TryGetValue(key, out var v)
+                                ? v
+                                : Enumerable.Empty<(string Sub, int Idx)>()))
                         .Select(v => v.Sub)
+                        .Distinct(StringComparer.Ordinal)
                         .ToList();
 
                     if (candidates.Count > 0)
@@ -355,29 +409,111 @@ public partial class MainForm : Form
         detailLogs.Add($"summary\tcopied={totalCopied}\tskipped={totalSkipped}\tunmatched={totalUnmatched}");
         WriteLogCopies(
             detailLogs,
-            organizeLogPath, organizeLogPathShared, organizeLogLatestShared,
+            organizeLogPath, organizeLogLatestPath,
+            organizeLogPathShared, organizeLogLatestShared,
             organizeLogPathEmergency, organizeLogLatestEmergency);
 
         if (unmatchedLogs.Count > 0)
         {
             WriteLogCopies(
                 unmatchedLogs,
-                unmatchedLogPath, unmatchedLogPathShared, unmatchedLogLatestShared,
+                unmatchedLogPath, unmatchedLogPathRun, unmatchedLogLatestPath,
+                unmatchedLogPathShared, unmatchedLogLatestShared,
                 unmatchedLogPathEmergency, unmatchedLogLatestEmergency);
         }
         else
         {
             WriteLogCopies(
                 new[] { "[NO_UNMATCHED]" },
-                unmatchedLogPath, unmatchedLogPathShared, unmatchedLogLatestShared,
+                unmatchedLogPath, unmatchedLogPathRun, unmatchedLogLatestPath,
+                unmatchedLogPathShared, unmatchedLogLatestShared,
                 unmatchedLogPathEmergency, unmatchedLogLatestEmergency);
         }
 
-        return $"コピー完了: {totalCopied} 曲 / 既設: {totalSkipped} 曲 (未マッチ {totalUnmatched} 件 / ログ: {organizeLogLatestEmergency})";
+        return $"コピー完了{totalCopied}曲（既設{totalSkipped}曲 / 未マッチ{totalUnmatched}件）";
     }
 
     static string ToHex(string s) => string.Join("", s.Select(c => $"{(int)c:X4}"));
     static string SanitizeLogText(string? s) => (s ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
+    static string[] BuildTitleLookupKeys(string titleNorm, string subtitleNorm, string? fullTitleNorm = null)
+    {
+        var keys = new List<string>();
+        foreach (var key in NormalizationUtils.ExpandTitleMatchKeys(titleNorm))
+            keys.Add(key);
+
+        var full = string.IsNullOrWhiteSpace(fullTitleNorm) ? string.Empty : fullTitleNorm;
+        if (!string.IsNullOrEmpty(full) && !string.Equals(full, titleNorm, StringComparison.Ordinal))
+        {
+            foreach (var key in NormalizationUtils.ExpandTitleMatchKeys(full))
+                keys.Add(key);
+        }
+
+        if (!string.IsNullOrEmpty(subtitleNorm))
+        {
+            var combined = $"{titleNorm}{subtitleNorm}";
+            foreach (var key in NormalizationUtils.ExpandTitleMatchKeys(combined))
+                keys.Add(key);
+
+            if (!string.IsNullOrEmpty(full) && !string.Equals(full, titleNorm, StringComparison.Ordinal))
+            {
+                var fullCombined = $"{full}{subtitleNorm}";
+                foreach (var key in NormalizationUtils.ExpandTitleMatchKeys(fullCombined))
+                    keys.Add(key);
+            }
+        }
+
+        return keys
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    static string? FindLooseTitleMatchKey(
+        Dictionary<string, List<(string SubtitleNorm, int Index)>> songsByTitle,
+        IEnumerable<string> lookupKeys)
+    {
+        var hits = new HashSet<string>(StringComparer.Ordinal);
+        var keys = lookupKeys
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        foreach (var lookup in keys)
+        {
+            foreach (var songKey in songsByTitle.Keys)
+            {
+                if (IsLooseTitleMatch(lookup, songKey))
+                    hits.Add(songKey);
+            }
+        }
+
+        return hits.Count == 1 ? hits.First() : null;
+    }
+
+    static bool IsLooseTitleMatch(string a, string b)
+    {
+        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
+            return false;
+
+        if (string.Equals(a, b, StringComparison.Ordinal))
+            return true;
+
+        var minLen = Math.Min(a.Length, b.Length);
+        if (minLen < 4)
+            return false;
+
+        if (a.StartsWith(b, StringComparison.Ordinal) || b.StartsWith(a, StringComparison.Ordinal))
+        {
+            var diff = Math.Abs(a.Length - b.Length);
+            return diff <= Math.Max(10, minLen);
+        }
+
+        if (a.Contains(b, StringComparison.Ordinal) || b.Contains(a, StringComparison.Ordinal))
+            return minLen >= 6;
+
+        return false;
+    }
+
     static string GetSharedLogsDir()
     {
         var dir = Path.Combine(
@@ -458,12 +594,15 @@ public partial class MainForm : Form
                 var subtitleNorm = NormalizationUtils.NormalizeSubtitle(subtitle);
                 var officialIdx = int.TryParse(idStr, out var n) ? n : i + 1;
 
-                if (!songsByTitle.TryGetValue(titleNorm, out var versions))
+                foreach (var titleKey in NormalizationUtils.ExpandTitleMatchKeys(titleNorm))
                 {
-                    versions = new List<(string SubtitleNorm, int Index)>();
-                    songsByTitle[titleNorm] = versions;
+                    if (!songsByTitle.TryGetValue(titleKey, out var versions))
+                    {
+                        versions = new List<(string SubtitleNorm, int Index)>();
+                        songsByTitle[titleKey] = versions;
+                    }
+                    versions.Add((subtitleNorm, officialIdx));
                 }
-                versions.Add((subtitleNorm, officialIdx));
             }
 
             result[cat.DisplayName] = songsByTitle;
@@ -472,7 +611,7 @@ public partial class MainForm : Form
         return result;
     }
 
-    public record SongDetail(string Title, string Subtitle);
+    public record SongDetail(string Title, string Subtitle, string? FullTitle);
 
     static SongDetail? ReadSongInfo(string tjaPath)
     {
@@ -527,6 +666,7 @@ public partial class MainForm : Form
         
         var resTitle = titleJa ?? title;
         if (resTitle == null) return null;
+        var fullTitle = resTitle;
 
         var resSubtitle = subtitleJa ?? subtitle ?? string.Empty;
 
@@ -546,7 +686,7 @@ public partial class MainForm : Form
             }
         }
 
-        return new SongDetail(resTitle, resSubtitle);
+        return new SongDetail(resTitle, resSubtitle, fullTitle);
     }
 
     static bool TryExtractInlineSubtitleFromTitle(string title, out string mainTitle, out string inlineSubtitle)
