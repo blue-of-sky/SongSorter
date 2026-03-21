@@ -17,11 +17,15 @@ public partial class MainForm : Form
         var exportDir = Path.Combine(exeDir, "Export");
         Directory.CreateDirectory(exportDir);
         var fetchLogPath = Path.Combine(exportDir, $"fetch_{runId}.log");
+        var sharedLogsDir = GetSharedLogsDir();
+        var fetchLogPathShared = Path.Combine(sharedLogsDir, $"fetch_{runId}.log");
+        var fetchLogLatestShared = Path.Combine(sharedLogsDir, "fetch_latest.log");
         var fetchLogs = new List<string>
         {
             $"run_id={runId}",
             $"started_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}",
-            $"export_dir={exportDir}"
+            $"export_dir={exportDir}",
+            $"shared_logs_dir={sharedLogsDir}"
         };
 
         int fileCount = 0;
@@ -54,7 +58,7 @@ public partial class MainForm : Form
 
         fetchLogs.Add($"finished_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
         fetchLogs.Add($"summary\tfiles={fileCount}\ttitles={totalTitles}");
-        File.WriteAllLines(fetchLogPath, fetchLogs, Encoding.UTF8);
+        WriteLogCopies(fetchLogs, fetchLogPath, fetchLogPathShared, fetchLogLatestShared);
 
         SetStatus($"曲リスト取得完了（{fileCount} 件 / {totalTitles} 曲）", showProgress: false);
         return (fileCount, totalTitles);
@@ -150,13 +154,20 @@ public partial class MainForm : Form
         var songsRoot = ResolveSongsRoot(destRootDir);
         Directory.CreateDirectory(songsRoot);
         var organizeLogPath = Path.Combine(exportDir, $"organize_{runId}.log");
+        var sharedLogsDir = GetSharedLogsDir();
+        var organizeLogPathShared = Path.Combine(sharedLogsDir, $"organize_{runId}.log");
+        var organizeLogLatestShared = Path.Combine(sharedLogsDir, "organize_latest.log");
+        var unmatchedLogPath = Path.Combine(exportDir, "log.txt");
+        var unmatchedLogPathShared = Path.Combine(sharedLogsDir, $"unmatched_{runId}.log");
+        var unmatchedLogLatestShared = Path.Combine(sharedLogsDir, "unmatched_latest.log");
         var detailLogs = new List<string>
         {
             $"run_id={runId}",
             $"started_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}",
             $"temp_songs_dir={tempSongsDir}",
             $"dest_root_dir={destRootDir}",
-            $"resolved_songs_root={songsRoot}"
+            $"resolved_songs_root={songsRoot}",
+            $"shared_logs_dir={sharedLogsDir}"
         };
 
         int totalCopied = 0;
@@ -326,19 +337,45 @@ public partial class MainForm : Form
 
         detailLogs.Add($"finished_at={DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
         detailLogs.Add($"summary\tcopied={totalCopied}\tskipped={totalSkipped}\tunmatched={totalUnmatched}");
-        File.WriteAllLines(organizeLogPath, detailLogs, Encoding.UTF8);
+        WriteLogCopies(detailLogs, organizeLogPath, organizeLogPathShared, organizeLogLatestShared);
 
         if (unmatchedLogs.Count > 0)
         {
-            var logPath = Path.Combine(exportDir, "log.txt");
-            File.WriteAllLines(logPath, unmatchedLogs, Encoding.UTF8);
+            WriteLogCopies(unmatchedLogs, unmatchedLogPath, unmatchedLogPathShared, unmatchedLogLatestShared);
         }
 
-        return $"コピー完了: {totalCopied} 曲 / 既設: {totalSkipped} 曲 (未マッチ {totalUnmatched} 件 / log.txt と organize_{runId}.log を確認してください)";
+        return $"コピー完了: {totalCopied} 曲 / 既設: {totalSkipped} 曲 (未マッチ {totalUnmatched} 件 / ログ: {organizeLogPathShared})";
     }
 
     static string ToHex(string s) => string.Join("", s.Select(c => $"{(int)c:X4}"));
     static string SanitizeLogText(string? s) => (s ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
+    static string GetSharedLogsDir()
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "SongSorterApp",
+            "Logs");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    static void WriteLogCopies(IEnumerable<string> lines, params string[] paths)
+    {
+        foreach (var path in paths.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var parent = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(parent))
+                    Directory.CreateDirectory(parent);
+                File.WriteAllLines(path, lines, Encoding.UTF8);
+            }
+            catch
+            {
+                // ログ書き込み失敗は本処理を止めない
+            }
+        }
+    }
 
     static Dictionary<string, Dictionary<string, List<(string SubtitleNorm, int Index)>>> LoadExportIndexes(string exportDir)
     {
