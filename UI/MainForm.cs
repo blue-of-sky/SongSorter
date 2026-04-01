@@ -15,16 +15,18 @@ public partial class MainForm : Form
         {
             this.Icon = new Icon("SongConverter.ico");
         }
-        logBox.Items.Add("ここにログが表示されます。");
+        logBox.Text = "ここにログが表示されます。" + Environment.NewLine;
         LoadSettings();
         
         btnBrowseTemp.Click += (s, e) => BrowseFolder(txtTempSongs);
         btnBrowseRoot.Click += (s, e) => BrowseFolder(txtTaikoRoot);
         btnBrowseDanSongs.Click += (s, e) => BrowseFolder(txtDanSongsPath);
+        btnBrowseAddSongsFolder.Click += (s, e) => BrowseFolder(txtAddSongsFolder);
         
         btnFetchLists.Click += async (s, e) => await OnFetchListsClick();
         btnOrganize.Click += async (s, e) => await OnOrganizeClick();
         btnGenerateDan.Click += async (s, e) => await OnGenerateDanClick();
+        btnExecuteAddSongs.Click += async (s, e) => await OnExecuteAddSongsClick();
     }
 
     private void BrowseFolder(TextBox target)
@@ -44,8 +46,7 @@ public partial class MainForm : Form
             this.Invoke(new Action(() => Log(msg)));
             return;
         }
-        logBox.Items.Add($"[{DateTime.Now:HH:mm:ss}] {msg}");
-        logBox.SelectedIndex = logBox.Items.Count - 1;
+        logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {msg}{Environment.NewLine}");
     }
 
     private void SetStatus(string msg, bool showProgress = false)
@@ -153,6 +154,106 @@ public partial class MainForm : Form
         }
     }
 
+    private async Task OnExecuteAddSongsClick()
+    {
+        if (string.IsNullOrWhiteSpace(txtAddSongsFolder.Text))
+        {
+            MessageBox.Show("ダウンロード先フォルダを指定してください。", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        btnExecuteAddSongs.Enabled = false;
+        SetStatus("楽曲追加中...", true);
+        Log("楽曲のダウンロードを開始します...");
+
+        try
+        {
+            // Gitの存在確認 (TESTビルド時はモック)
+            bool gitInstalled = await CheckGitInstalledAsync();
+            if (!gitInstalled)
+            {
+                Log("【エラー】gitがインストールされていません。");
+                Log("以下の公式URLからgitをインストールしてください。");
+                Log("https://git-scm.com/");
+                MessageBox.Show("gitがインストールされていないため、実行できません。\nログに表示されたURLからインストールしてください。", "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            string targetDir = txtAddSongsFolder.Text;
+            if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
+
+            Log($"実行コマンド: git clone https://ese.tjadataba.se/ESE/ESE.git Songs");
+            Log($"実行場所: {targetDir}");
+
+            await RunGitCloneAsync(targetDir);
+
+            Log("楽曲のダウンロードが完了しました。");
+            MessageBox.Show("楽曲の追加が完了しました。", "完了", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"エラー: {ex.Message}");
+            MessageBox.Show(ex.Message, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            btnExecuteAddSongs.Enabled = true;
+            SetStatus("準備完了");
+        }
+    }
+
+    private async Task<bool> CheckGitInstalledAsync()
+    {
+#if TEST
+        // Testビルド時はgitがないふりをする
+        return false;
+#else
+        try
+        {
+            using var process = new System.Diagnostics.Process();
+            process.StartInfo.FileName = "git";
+            process.StartInfo.Arguments = "--version";
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.CreateNoWindow = true;
+            process.Start();
+            await process.WaitForExitAsync();
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+#endif
+    }
+
+    private async Task RunGitCloneAsync(string workingDir)
+    {
+        var tcs = new TaskCompletionSource<bool>();
+        using var process = new System.Diagnostics.Process();
+        process.StartInfo.FileName = "git";
+        process.StartInfo.Arguments = "clone https://ese.tjadataba.se/ESE/ESE.git Songs";
+        process.StartInfo.WorkingDirectory = workingDir;
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.RedirectStandardError = true;
+        process.StartInfo.UseShellExecute = false;
+        process.StartInfo.CreateNoWindow = true;
+        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+
+        process.OutputDataReceived += (s, e) => { if (e.Data != null) Log(e.Data); };
+        process.ErrorDataReceived += (s, e) => { if (e.Data != null) Log(e.Data); };
+
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0)
+        {
+            throw new Exception($"Gitコマンドが終了コード {process.ExitCode} で終了しました。");
+        }
+    }
+
     private void SaveSettings()
     {
         var settings = new AppSettings
@@ -161,7 +262,8 @@ public partial class MainForm : Form
             TaikoRoot = txtTaikoRoot.Text,
             DanSongs = txtDanSongsPath.Text,
             WikiUrl = txtWikiUrl.Text,
-            OutputSub = txtDanOutputSub.Text
+            OutputSub = txtDanOutputSub.Text,
+            AddSongsFolder = txtAddSongsFolder.Text
         };
         string json = JsonSerializer.Serialize(settings);
         File.WriteAllText(SettingsPath, json);
@@ -182,6 +284,7 @@ public partial class MainForm : Form
                     txtDanSongsPath.Text = settings.DanSongs;
                     txtWikiUrl.Text = settings.WikiUrl ?? txtWikiUrl.Text;
                     txtDanOutputSub.Text = settings.OutputSub ?? txtDanOutputSub.Text;
+                    txtAddSongsFolder.Text = settings.AddSongsFolder ?? txtAddSongsFolder.Text;
                 }
             }
             catch { }
@@ -195,5 +298,6 @@ public partial class MainForm : Form
         public string DanSongs { get; set; } = "";
         public string WikiUrl { get; set; } = "";
         public string OutputSub { get; set; } = "";
+        public string AddSongsFolder { get; set; } = "";
     }
 }

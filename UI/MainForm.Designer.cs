@@ -18,10 +18,11 @@ partial class MainForm
         this.tabControl = new System.Windows.Forms.TabControl();
         this.tabSongSorter = new System.Windows.Forms.TabPage();
         this.tabDanGenerator = new System.Windows.Forms.TabPage();
+        this.tabAddSongs = new System.Windows.Forms.TabPage();
         this.statusStrip = new System.Windows.Forms.StatusStrip();
         this.statusLabel = new System.Windows.Forms.ToolStripStatusLabel();
         this.progressBar = new System.Windows.Forms.ToolStripProgressBar();
-        this.logBox = new System.Windows.Forms.ListBox();
+        this.logBox = new System.Windows.Forms.TextBox();
 
         // Song Sorter Tab Controls
         this.btnOrganize = new System.Windows.Forms.Button();
@@ -43,13 +44,21 @@ partial class MainForm
         this.btnBrowseDanSongs = new System.Windows.Forms.Button();
         this.btnGenerateDan = new System.Windows.Forms.Button();
 
+        // Add Songs Tab Controls
+        this.lblAddSongsFolder = new System.Windows.Forms.Label();
+        this.txtAddSongsFolder = new System.Windows.Forms.TextBox();
+        this.btnBrowseAddSongsFolder = new System.Windows.Forms.Button();
+        this.btnExecuteAddSongs = new System.Windows.Forms.Button();
+
         this.tabControl.SuspendLayout();
         this.tabSongSorter.SuspendLayout();
         this.tabDanGenerator.SuspendLayout();
+        this.tabAddSongs.SuspendLayout();
         this.statusStrip.SuspendLayout();
         this.SuspendLayout();
 
         // tabControl
+        this.tabControl.Controls.Add(this.tabAddSongs);
         this.tabControl.Controls.Add(this.tabSongSorter);
         this.tabControl.Controls.Add(this.tabDanGenerator);
         this.tabControl.Dock = System.Windows.Forms.DockStyle.Top;
@@ -73,8 +82,8 @@ partial class MainForm
         this.tabSongSorter.Name = "tabSongSorter";
         this.tabSongSorter.Padding = new System.Windows.Forms.Padding(15);
         this.tabSongSorter.Size = new System.Drawing.Size(676, 292);
-        this.tabSongSorter.TabIndex = 0;
-        this.tabSongSorter.Text = "Song Sorter";
+        this.tabSongSorter.TabIndex = 1;
+        this.tabSongSorter.Text = "SongSorter";
 
         // tabDanGenerator
         this.tabDanGenerator.BackColor = System.Drawing.Color.White;
@@ -90,18 +99,53 @@ partial class MainForm
         this.tabDanGenerator.Name = "tabDanGenerator";
         this.tabDanGenerator.Padding = new System.Windows.Forms.Padding(15);
         this.tabDanGenerator.Size = new System.Drawing.Size(676, 292);
-        this.tabDanGenerator.TabIndex = 1;
-        this.tabDanGenerator.Text = "Dan Generator";
+        this.tabDanGenerator.TabIndex = 2;
+        this.tabDanGenerator.Text = "DanGenerator";
+
+        // tabAddSongs
+        this.tabAddSongs.BackColor = System.Drawing.Color.White;
+        this.tabAddSongs.Controls.Add(this.btnExecuteAddSongs);
+        this.tabAddSongs.Controls.Add(this.btnBrowseAddSongsFolder);
+        this.tabAddSongs.Controls.Add(this.txtAddSongsFolder);
+        this.tabAddSongs.Controls.Add(this.lblAddSongsFolder);
+        this.tabAddSongs.Location = new System.Drawing.Point(4, 24);
+        this.tabAddSongs.Name = "tabAddSongs";
+        this.tabAddSongs.Padding = new System.Windows.Forms.Padding(15);
+        this.tabAddSongs.Size = new System.Drawing.Size(676, 292);
+        this.tabAddSongs.TabIndex = 0;
+        this.tabAddSongs.Text = "AddSongs";
+
+        // lblAddSongsFolder
+        this.lblAddSongsFolder.Location = new System.Drawing.Point(20, 20);
+        this.lblAddSongsFolder.Text = "楽曲をダウンロードするフォルダを選択:";
+        this.lblAddSongsFolder.Size = new System.Drawing.Size(400, 20);
+
+        this.txtAddSongsFolder.Location = new System.Drawing.Point(20, 45);
+        this.txtAddSongsFolder.Size = new System.Drawing.Size(530, 23);
+
+        this.btnBrowseAddSongsFolder.Location = new System.Drawing.Point(560, 43);
+        this.btnBrowseAddSongsFolder.Size = new System.Drawing.Size(90, 27);
+        this.btnBrowseAddSongsFolder.Text = "参照...";
+
+        this.btnExecuteAddSongs.Location = new System.Drawing.Point(20, 100);
+        this.btnExecuteAddSongs.Size = new System.Drawing.Size(200, 45);
+        this.btnExecuteAddSongs.Text = "曲追加実行";
+        this.btnExecuteAddSongs.BackColor = System.Drawing.Color.FromArgb(0, 153, 255);
+        this.btnExecuteAddSongs.ForeColor = System.Drawing.Color.White;
+        this.btnExecuteAddSongs.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+        this.btnExecuteAddSongs.Font = new System.Drawing.Font("Noto Sans", 10F, System.Drawing.FontStyle.Bold);
 
         // logBox
         this.logBox.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
         this.logBox.BorderStyle = System.Windows.Forms.BorderStyle.None;
         this.logBox.Dock = System.Windows.Forms.DockStyle.Fill;
-        this.logBox.Font = new System.Drawing.Font("Noto Sans", 9F);
+        this.logBox.Font = new System.Drawing.Font("Consolas", 9F);
         this.logBox.ForeColor = System.Drawing.Color.LightGray;
-        this.logBox.ItemHeight = 14;
         this.logBox.Location = new System.Drawing.Point(0, 320);
+        this.logBox.Multiline = true;
         this.logBox.Name = "logBox";
+        this.logBox.ReadOnly = true;
+        this.logBox.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
         this.logBox.Size = new System.Drawing.Size(684, 279);
         this.logBox.TabIndex = 1;
 
@@ -152,7 +196,7 @@ partial class MainForm
 
         this.txtWikiUrl.Location = new System.Drawing.Point(20, 45);
         this.txtWikiUrl.Size = new System.Drawing.Size(630, 23);
-        this.txtWikiUrl.Text = "https://wikiwiki.jp/taiko-fumen/%E6%AE%B5%E4%BD%8D%E9%81%93%E5%A0%B4";
+        this.txtWikiUrl.Text = "";
 
         this.lblDanOutput.Location = new System.Drawing.Point(20, 90);
         this.lblDanOutput.Text = "出力フォルダ名:";
@@ -213,6 +257,8 @@ partial class MainForm
         this.tabSongSorter.PerformLayout();
         this.tabDanGenerator.ResumeLayout(false);
         this.tabDanGenerator.PerformLayout();
+        this.tabAddSongs.ResumeLayout(false);
+        this.tabAddSongs.PerformLayout();
         this.statusStrip.ResumeLayout(false);
         this.statusStrip.PerformLayout();
         this.ResumeLayout(false);
@@ -222,7 +268,8 @@ partial class MainForm
     private System.Windows.Forms.TabControl tabControl;
     private System.Windows.Forms.TabPage tabSongSorter;
     private System.Windows.Forms.TabPage tabDanGenerator;
-    private System.Windows.Forms.ListBox logBox;
+    private System.Windows.Forms.TabPage tabAddSongs;
+    private System.Windows.Forms.TextBox logBox;
     private System.Windows.Forms.StatusStrip statusStrip;
     private System.Windows.Forms.ToolStripStatusLabel statusLabel;
     private System.Windows.Forms.ToolStripProgressBar progressBar;
@@ -244,4 +291,9 @@ partial class MainForm
     private System.Windows.Forms.TextBox txtDanSongsPath;
     private System.Windows.Forms.Button btnBrowseDanSongs;
     private System.Windows.Forms.Button btnGenerateDan;
+
+    private System.Windows.Forms.Label lblAddSongsFolder;
+    private System.Windows.Forms.TextBox txtAddSongsFolder;
+    private System.Windows.Forms.Button btnBrowseAddSongsFolder;
+    private System.Windows.Forms.Button btnExecuteAddSongs;
 }
