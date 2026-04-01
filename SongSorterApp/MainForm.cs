@@ -373,14 +373,26 @@ public partial class MainForm : Form
                         var hadClaimConflict = false;
                         var hadExistsConflict = false;
 
-                        // 競合回避: 同一コピー先は先着1スレッドだけ処理
-                        foreach (var folderName in folderNameCandidates)
+                        // Keep reruns idempotent: if canonical "<num> <title>" or an old variant exists, skip.
+                        if (TryFindExistingSongFolder(dstGenreDir, folderNameCandidates[0], out var existingSongDir))
                         {
+                            Interlocked.Increment(ref totalSkipped);
+                            perSongLogs.Add($"skip_exists_primary\ttarget={target.Dest}\texport={target.Export}\tindex={num}\tdst={existingSongDir}\ttja={candidate.Path}");
+                            continue;
+                        }
+
+                        // 競合回避: 同一コピー先は先着1スレッドだけ処理
+                        for (var folderCandidateIndex = 0; folderCandidateIndex < folderNameCandidates.Length; folderCandidateIndex++)
+                        {
+                            var folderName = folderNameCandidates[folderCandidateIndex];
+                            var isPrimaryCandidate = folderCandidateIndex == 0;
                             var dstCandidate = Path.Combine(dstGenreDir, folderName);
                             if (!copyPathClaims.TryAdd(dstCandidate, 0))
                             {
                                 hadClaimConflict = true;
                                 perSongLogs.Add($"dst_claim_conflict\ttarget={target.Dest}\texport={target.Export}\tindex={num}\tdst={dstCandidate}\ttja={candidate.Path}");
+                                if (isPrimaryCandidate)
+                                    break;
                                 continue;
                             }
 
@@ -388,6 +400,8 @@ public partial class MainForm : Form
                             {
                                 hadExistsConflict = true;
                                 perSongLogs.Add($"dst_exists_conflict\ttarget={target.Dest}\texport={target.Export}\tindex={num}\tdst={dstCandidate}\ttja={candidate.Path}");
+                                if (isPrimaryCandidate)
+                                    break;
                                 continue;
                             }
 
@@ -845,6 +859,50 @@ public partial class MainForm : Form
         var work = subtitle.Trim();
         work = work.TrimStart('-', '+', '\uFF0D', '\uFF0B', '\u2014', '\u2013').Trim();
         return SanitizeFolderName(work);
+    }
+
+    static bool TryFindExistingSongFolder(string genreDir, string primaryFolderName, out string existingDirPath)
+    {
+        existingDirPath = Path.Combine(genreDir, primaryFolderName);
+        if (!Directory.Exists(genreDir))
+            return false;
+
+        try
+        {
+            foreach (var dir in Directory.GetDirectories(genreDir))
+            {
+                var name = Path.GetFileName(dir);
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                if (IsSameSongFolderName(primaryFolderName, name))
+                {
+                    existingDirPath = dir;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // If directory listing fails transiently, fall back to normal flow.
+        }
+
+        return false;
+    }
+
+    static bool IsSameSongFolderName(string primaryFolderName, string existingFolderName)
+    {
+        if (string.Equals(primaryFolderName, existingFolderName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (!existingFolderName.StartsWith(primaryFolderName, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (existingFolderName.Length <= primaryFolderName.Length)
+            return false;
+
+        var next = existingFolderName[primaryFolderName.Length];
+        return char.IsWhiteSpace(next) || next == '[' || next == '(' || next == '\uFF3B' || next == '\uFF08';
     }
 
     private static readonly object _boxLock = new();
