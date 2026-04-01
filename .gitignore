@@ -1,7 +1,0 @@
-# Build outputs
-**/[Bb]in/
-**/[Oo]bj/
-
-# Visual Studio workspace settings
-.vs/
-**/.vs/
