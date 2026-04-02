@@ -30,7 +30,7 @@ public class DanConvertorCore
         string outputDir = Path.Combine(outputRoot, safeTitle);
         Directory.CreateDirectory(outputDir);
 
-        logAction?.Invoke($"複合優先検索を開始: {courseTitle} -> {outputDir}");
+        logAction?.Invoke($"分割優先変換を開始: {courseTitle} -> {outputDir}");
 
         var danJson = new DanJson { title = courseTitle };
         foreach (var line in lines)
@@ -51,10 +51,10 @@ public class DanConvertorCore
         var sections = SplitIntoSections(lines, globalMeta);
         var finalSongs = new List<DanSong>();
         
-        // Scan simulator folder for fuzzy matching and file matching
-        string[]? allFiles = !string.IsNullOrEmpty(simuFolder) && Directory.Exists(simuFolder)
-                           ? await Task.Run(() => Directory.GetFiles(simuFolder, "*.*", SearchOption.AllDirectories), ct)
-                           : null;
+        string localDir = Path.GetDirectoryName(tjaPath)!;
+        string[]? allSimuFiles = !string.IsNullOrEmpty(simuFolder) && Directory.Exists(simuFolder)
+                               ? await Task.Run(() => Directory.GetFiles(simuFolder, "*.*", SearchOption.AllDirectories), ct)
+                               : null;
 
         foreach (var section in sections)
         {
@@ -62,48 +62,20 @@ public class DanConvertorCore
             bool processed = false;
             string targetTjaName = Path.ChangeExtension(section.Wave, ".tja");
 
-            // --- Multi-Step Search in Simulator Folder ---
-            if (allFiles != null)
+            // --- Priority Level 1: Search Standalone TJA in Selected Local Folder ---
+            string localTja = Path.Combine(localDir, targetTjaName);
+            string localMusic = Path.Combine(localDir, section.Wave);
+            
+            if (File.Exists(localTja) && File.Exists(localMusic))
             {
-                // Step 1: Search by WAVE filename (Highest accuracy)
-                string? waveInSimu = allFiles.FirstOrDefault(f => Path.GetFileName(f).Equals(section.Wave, StringComparison.OrdinalIgnoreCase));
-                if (waveInSimu != null)
-                {
-                    string songDir = Path.GetDirectoryName(waveInSimu)!;
-                    string? foundTja = Directory.GetFiles(songDir, "*.tja").FirstOrDefault();
-                    if (foundTja != null)
-                    {
-                        File.Copy(foundTja, Path.Combine(outputDir, Path.GetFileName(foundTja)), true);
-                        File.Copy(waveInSimu, Path.Combine(outputDir, section.Wave), true);
-                        finalSongs.Add(new DanSong { path = Path.GetFileName(foundTja), genre = section.Genre, difficulty = 3 });
-                        logAction?.Invoke($"  シミュレータで見つかりました (WAVE一致): {section.Title}");
-                        processed = true;
-                    }
-                }
-
-                // Step 2: Search by Fuzzy Folder Name (Fallback for folder search)
-                if (!processed)
-                {
-                    var dirs = allFiles.Select(f => Path.GetDirectoryName(f)!).Distinct();
-                    string normTitle = NormalizationUtils.NormalizeTitle(section.Title);
-                    string? matchedDir = dirs.FirstOrDefault(d => NormalizationUtils.NormalizeTitle(Path.GetFileName(d)).Contains(normTitle));
-                    if (matchedDir != null)
-                    {
-                        string? foundTja = Directory.GetFiles(matchedDir, "*.tja").FirstOrDefault();
-                        string? foundMusic = Directory.GetFiles(matchedDir, "*.*").FirstOrDefault(f => MusicExtensions.Contains(Path.GetExtension(f).ToLower()));
-                        if (foundTja != null && foundMusic != null)
-                        {
-                            File.Copy(foundTja, Path.Combine(outputDir, Path.GetFileName(foundTja)), true);
-                            File.Copy(foundMusic, Path.Combine(outputDir, section.Wave), true);
-                            finalSongs.Add(new DanSong { path = Path.GetFileName(foundTja), genre = section.Genre, difficulty = 3 });
-                            logAction?.Invoke($"  シミュレータで見つかりました (フォルダ名一致): {section.Title}");
-                            processed = true;
-                        }
-                    }
-                }
+                File.Copy(localTja, Path.Combine(outputDir, targetTjaName), true);
+                File.Copy(localMusic, Path.Combine(outputDir, section.Wave), true);
+                finalSongs.Add(new DanSong { path = targetTjaName, genre = section.Genre, difficulty = 3 });
+                logAction?.Invoke($"  選択フォルダから反映: {section.Title}");
+                processed = true;
             }
 
-            // --- Fallback: Split from Dan TJA ---
+            // --- Priority Level 2: Split from Dan TJA ---
             if (!processed)
             {
                 string tjaPathOut = Path.Combine(outputDir, targetTjaName);
@@ -136,11 +108,14 @@ public class DanConvertorCore
 
                 await File.WriteAllTextAsync(tjaPathOut, sb.ToString(), new UTF8Encoding(false), ct);
                 
-                string? foundLocalWave = Directory.GetFiles(Path.GetDirectoryName(tjaPath)!).FirstOrDefault(f => Path.GetFileName(f).Equals(section.Wave, StringComparison.OrdinalIgnoreCase));
-                if (foundLocalWave != null)
+                // Find music file (Local folder first, then Simulator folder)
+                string? waveFallback = File.Exists(localMusic) ? localMusic 
+                                      : allSimuFiles?.FirstOrDefault(f => Path.GetFileName(f).Equals(section.Wave, StringComparison.OrdinalIgnoreCase));
+                
+                if (waveFallback != null)
                 {
-                    File.Copy(foundLocalWave, Path.Combine(outputDir, section.Wave), true);
-                    logAction?.Invoke($"  段位TJAと同じ場所に音源がありました: {section.Title}");
+                    File.Copy(waveFallback, Path.Combine(outputDir, section.Wave), true);
+                    logAction?.Invoke($"  分割譜面を生成 + 音源採取({(waveFallback.Contains(localDir) ? "選択フォルダ" : "シミュ")}): {section.Title}");
                 }
                 else
                 {
