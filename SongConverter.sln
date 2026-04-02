@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.4.11626.88 stable
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SongConverter", "SongConverter.csproj", "{8547FB3B-6776-3452-335A-E791CC4328E2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+		Test|Any CPU = Test|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8547FB3B-6776-3452-335A-E791CC4328E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8547FB3B-6776-3452-335A-E791CC4328E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8547FB3B-6776-3452-335A-E791CC4328E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8547FB3B-6776-3452-335A-E791CC4328E2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8547FB3B-6776-3452-335A-E791CC4328E2}.Test|Any CPU.ActiveCfg = Test|Any CPU
+		{8547FB3B-6776-3452-335A-E791CC4328E2}.Test|Any CPU.Build.0 = Test|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {D23E4C71-377C-42F2-AB56-22F73127871C}
+	EndGlobalSection
+EndGlobal

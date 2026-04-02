@@ -11,8 +11,9 @@ public class DanGeneratorCore
 {
     private static readonly HttpClient httpClient = new HttpClient();
 
-    public static async Task GenerateAsync(string inputSource, string outputDir, string songsFolder = "", Action<string>? logAction = null)
+    public static async Task GenerateAsync(string inputSource, string outputDir, string songsFolder = "", string filter = "", Action<string>? logAction = null, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
 
         string html;
@@ -21,9 +22,9 @@ public class DanGeneratorCore
             if (inputSource.StartsWith("http"))
             {
                 logAction?.Invoke($"URLからデータを取得中: {inputSource}");
-                var response = await httpClient.GetAsync(inputSource);
+                var response = await httpClient.GetAsync(inputSource, ct);
                 response.EnsureSuccessStatusCode();
-                html = await response.Content.ReadAsStringAsync();
+                html = await response.Content.ReadAsStringAsync(ct);
             }
             else
             {
@@ -32,8 +33,12 @@ public class DanGeneratorCore
                     return;
                 }
                 logAction?.Invoke($"{inputSource} を読み込んでいます...");
-                html = await File.ReadAllTextAsync(inputSource);
+                html = await File.ReadAllTextAsync(inputSource, ct);
             }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -61,6 +66,7 @@ public class DanGeneratorCore
 
         foreach (var table in tables)
         {
+            ct.ThrowIfCancellationRequested();
             if (table.InnerText.Contains("課題候補曲リスト")) continue;
             if (!table.InnerText.Contains("1st")) continue;
 
@@ -71,6 +77,7 @@ public class DanGeneratorCore
 
             for (int i = 0; i < rows.Count; i++)
             {
+                ct.ThrowIfCancellationRequested();
                 var row = rows[i];
                 var cellNodes = row.SelectNodes(".//td");
                 if (cellNodes == null) continue;
@@ -89,11 +96,11 @@ public class DanGeneratorCore
 
                 if (string.IsNullOrEmpty(detectedRank) && cellTexts.Count > 0)
                 {
-                    foreach(var ct in cellTexts) {
-                        if (string.IsNullOrEmpty(ct) || ct.Length < 2) continue;
-                        if (excludeKeywords.Any(k => ct.Contains(k))) continue;
-                        if (IsDatePattern(ct)) continue;
-                        detectedRank = ct;
+                    foreach (var cellText in cellTexts) {
+                        if (string.IsNullOrEmpty(cellText) || cellText.Length < 2) continue;
+                        if (excludeKeywords.Any(k => cellText.Contains(k))) continue;
+                        if (IsDatePattern(cellText)) continue;
+                        detectedRank = cellText;
                         break;
                     }
                 }
@@ -105,6 +112,7 @@ public class DanGeneratorCore
                 }
 
                 if (string.IsNullOrEmpty(detectedRank) || detectedRank == lastParsedRankName) continue;
+                if (!string.IsNullOrEmpty(filter) && !detectedRank.Contains(filter)) continue;
 
                 try
                 {
@@ -175,9 +183,11 @@ public class DanGeneratorCore
 
                         if (!string.IsNullOrEmpty(songsFolder) && Directory.Exists(songsFolder))
                         {
+                            ct.ThrowIfCancellationRequested();
                             var allDirs = Directory.GetDirectories(songsFolder, "*", SearchOption.AllDirectories);
                             foreach (var s in dan.danSongs)
                             {
+                                ct.ThrowIfCancellationRequested();
                                 string songNameRaw = Path.GetFileNameWithoutExtension(s.path); 
                                 string songNameForSearch = songNameRaw.Replace("(裏譜面)", "").Replace("(裏)", "").Trim();
                                 string? foundDir = FindDirectoryFuzzy(allDirs, songNameForSearch);
@@ -195,10 +205,11 @@ public class DanGeneratorCore
                         }
 
                         string json = JsonSerializer.Serialize(dan, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-                        await File.WriteAllTextAsync(Path.Combine(rankFolder, "Dan.json"), json);
+                        await File.WriteAllTextAsync(Path.Combine(rankFolder, "Dan.json"), json, ct);
                         totalProcessed++; foundOrder++; lastParsedRankName = detectedRank;
                     }
                 }
+                catch (OperationCanceledException) { throw; }
                 catch (Exception ex) { logAction?.Invoke($"  警告 ({detectedRank}): {ex.Message}"); }
             }
         }
