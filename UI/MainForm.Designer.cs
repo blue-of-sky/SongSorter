@@ -44,8 +44,9 @@ partial class MainForm
         // Dan Generator Tab Controls
         this.lblWikiUrl = new System.Windows.Forms.Label();
         this.txtWikiUrl = new System.Windows.Forms.TextBox();
-        this.lblDanOutput = new System.Windows.Forms.Label();
-        this.txtDanOutputSub = new System.Windows.Forms.TextBox();
+        this.lblDanOutputFolder = new System.Windows.Forms.Label();
+        this.txtDanOutputFolder = new System.Windows.Forms.TextBox();
+        this.btnBrowseDanOutputFolder = new System.Windows.Forms.Button();
         this.lblDanSongsPath = new System.Windows.Forms.Label();
         this.txtDanSongsPath = new System.Windows.Forms.TextBox();
         this.btnBrowseDanSongs = new System.Windows.Forms.Button();
@@ -60,8 +61,9 @@ partial class MainForm
         this.lblDanConvertSimu = new System.Windows.Forms.Label();
         this.txtDanConvertSimu = new System.Windows.Forms.TextBox();
         this.btnBrowseDanConvertSimu = new System.Windows.Forms.Button();
-        this.lblDanConvertOutputSub = new System.Windows.Forms.Label();
-        this.txtDanConvertOutputSub = new System.Windows.Forms.TextBox();
+        this.lblDanConvertOutputFolder = new System.Windows.Forms.Label();
+        this.txtDanConvertOutputFolder = new System.Windows.Forms.TextBox();
+        this.btnBrowseDanConvertOutputFolder = new System.Windows.Forms.Button();
         this.btnConvertDan = new System.Windows.Forms.Button();
 
         this.tabControl.SuspendLayout();
@@ -172,12 +174,13 @@ partial class MainForm
 
         // tabDanGenerator
         this.tabDanGenerator.BackColor = System.Drawing.Color.White;
+        this.tabDanGenerator.Controls.Add(this.btnBrowseDanOutputFolder);
+        this.tabDanGenerator.Controls.Add(this.txtDanOutputFolder);
+        this.tabDanGenerator.Controls.Add(this.lblDanOutputFolder);
         this.tabDanGenerator.Controls.Add(this.btnGenerateDan);
         this.tabDanGenerator.Controls.Add(this.btnBrowseDanSongs);
         this.tabDanGenerator.Controls.Add(this.txtDanSongsPath);
         this.tabDanGenerator.Controls.Add(this.lblDanSongsPath);
-        this.tabDanGenerator.Controls.Add(this.txtDanOutputSub);
-        this.tabDanGenerator.Controls.Add(this.lblDanOutput);
         this.tabDanGenerator.Controls.Add(this.txtWikiFilter);
         this.tabDanGenerator.Controls.Add(this.lblWikiFilter);
         this.tabDanGenerator.Controls.Add(this.txtWikiUrl);
@@ -203,13 +206,16 @@ partial class MainForm
         this.txtWikiFilter.Location = new System.Drawing.Point(20, 110);
         this.txtWikiFilter.Size = new System.Drawing.Size(250, 23);
 
-        this.lblDanOutput.Location = new System.Drawing.Point(290, 85);
-        this.lblDanOutput.Text = "出力フォルダ名:";
-        this.lblDanOutput.Size = new System.Drawing.Size(200, 20);
+        this.lblDanOutputFolder.Location = new System.Drawing.Point(290, 85);
+        this.lblDanOutputFolder.Text = "出力フォルダ:";
+        this.lblDanOutputFolder.Size = new System.Drawing.Size(200, 20);
 
-        this.txtDanOutputSub.Location = new System.Drawing.Point(290, 110);
-        this.txtDanOutputSub.Size = new System.Drawing.Size(250, 23);
-        this.txtDanOutputSub.Text = "今段位";
+        this.txtDanOutputFolder.Location = new System.Drawing.Point(290, 110);
+        this.txtDanOutputFolder.Size = new System.Drawing.Size(360, 23);
+
+        this.btnBrowseDanOutputFolder.Location = new System.Drawing.Point(560, 168);
+        this.btnBrowseDanOutputFolder.Size = new System.Drawing.Size(90, 27);
+        this.btnBrowseDanOutputFolder.Text = "参照...";
 
         this.lblDanSongsPath.Location = new System.Drawing.Point(20, 145);
         this.lblDanSongsPath.Text = "シミュフォルダを選択:";
@@ -233,8 +239,9 @@ partial class MainForm
         // tabDanConvertor
         this.tabDanConvertor.BackColor = System.Drawing.Color.White;
         this.tabDanConvertor.AllowDrop = true;
-        this.tabDanConvertor.Controls.Add(this.lblDanConvertOutputSub);
-        this.tabDanConvertor.Controls.Add(this.txtDanConvertOutputSub);
+        this.tabDanConvertor.Controls.Add(this.lblDanConvertOutputFolder);
+        this.tabDanConvertor.Controls.Add(this.txtDanConvertOutputFolder);
+        this.tabDanConvertor.Controls.Add(this.btnBrowseDanConvertOutputFolder);
         this.tabDanConvertor.Controls.Add(this.btnConvertDan);
         this.tabDanConvertor.Controls.Add(this.btnBrowseDanConvertSimu);
         this.tabDanConvertor.Controls.Add(this.txtDanConvertSimu);
@@ -250,7 +257,7 @@ partial class MainForm
         this.tabDanConvertor.Text = "DanConvertor";
 
         this.lblTjaFile.Location = new System.Drawing.Point(20, 20);
-        this.lblTjaFile.Text = "変換対象のTJAファイルまたはフォルダを選択 (D&D可):";
+        this.lblTjaFile.Text = "変換対象のtjaを選択(またはドラッグアンドドロップ):";
         this.lblTjaFile.Size = new System.Drawing.Size(400, 20);
 
         this.txtTjaFile.Location = new System.Drawing.Point(20, 45);
@@ -261,16 +268,19 @@ partial class MainForm
         this.btnBrowseTjaFile.Size = new System.Drawing.Size(90, 27);
         this.btnBrowseTjaFile.Text = "参照...";
 
-        this.lblDanConvertOutputSub.Location = new System.Drawing.Point(20, 85);
-        this.lblDanConvertOutputSub.Text = "出力フォルダ名:";
-        this.lblDanConvertOutputSub.Size = new System.Drawing.Size(200, 20);
+        this.lblDanConvertOutputFolder.Location = new System.Drawing.Point(20, 85);
+        this.lblDanConvertOutputFolder.Text = "出力フォルダ:";
+        this.lblDanConvertOutputFolder.Size = new System.Drawing.Size(200, 20);
 
-        this.txtDanConvertOutputSub.Location = new System.Drawing.Point(20, 110);
-        this.txtDanConvertOutputSub.Size = new System.Drawing.Size(250, 23);
-        this.txtDanConvertOutputSub.Text = "今段位";
+        this.txtDanConvertOutputFolder.Location = new System.Drawing.Point(20, 110);
+        this.txtDanConvertOutputFolder.Size = new System.Drawing.Size(530, 23);
+
+        this.btnBrowseDanConvertOutputFolder.Location = new System.Drawing.Point(560, 108);
+        this.btnBrowseDanConvertOutputFolder.Size = new System.Drawing.Size(90, 27);
+        this.btnBrowseDanConvertOutputFolder.Text = "参照...";
 
         this.lblDanConvertSimu.Location = new System.Drawing.Point(20, 145);
-        this.lblDanConvertSimu.Text = "シミュフォルダを選択 (内部検索用):";
+        this.lblDanConvertSimu.Text = "シミュフォルダを選択 (省略可・内部検索用):";
         this.lblDanConvertSimu.Size = new System.Drawing.Size(400, 20);
 
         this.txtDanConvertSimu.Location = new System.Drawing.Point(20, 170);
@@ -364,8 +374,9 @@ partial class MainForm
 
     private System.Windows.Forms.Label lblWikiUrl;
     private System.Windows.Forms.TextBox txtWikiUrl;
-    private System.Windows.Forms.Label lblDanOutput;
-    private System.Windows.Forms.TextBox txtDanOutputSub;
+    private System.Windows.Forms.Label lblDanOutputFolder;
+    private System.Windows.Forms.TextBox txtDanOutputFolder;
+    private System.Windows.Forms.Button btnBrowseDanOutputFolder;
     private System.Windows.Forms.Button btnGenerateDan;
     private System.Windows.Forms.Label lblWikiFilter;
     private System.Windows.Forms.TextBox txtWikiFilter;
@@ -384,7 +395,8 @@ partial class MainForm
     private System.Windows.Forms.Label lblDanConvertSimu;
     private System.Windows.Forms.TextBox txtDanConvertSimu;
     private System.Windows.Forms.Button btnBrowseDanConvertSimu;
-    private System.Windows.Forms.Label lblDanConvertOutputSub;
-    private System.Windows.Forms.TextBox txtDanConvertOutputSub;
+    private System.Windows.Forms.Label lblDanConvertOutputFolder;
+    private System.Windows.Forms.TextBox txtDanConvertOutputFolder;
+    private System.Windows.Forms.Button btnBrowseDanConvertOutputFolder;
     private System.Windows.Forms.Button btnConvertDan;
 }

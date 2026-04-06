@@ -40,7 +40,9 @@ public partial class MainForm : Form
         btnBrowseTemp.Click += (s, e) => BrowseFolder(txtTempSongs, true);
         btnBrowseRoot.Click += (s, e) => BrowseFolder(txtTaikoRoot, false, true);
         btnBrowseDanSongs.Click += (s, e) => BrowseFolder(txtDanSongsPath, false, true, true);
+        btnBrowseDanOutputFolder.Click += (s, e) => BrowseFolder(txtDanOutputFolder, false, true);
         btnBrowseDanConvertSimu.Click += (s, e) => BrowseFolder(txtDanConvertSimu, false, true, true);
+        btnBrowseDanConvertOutputFolder.Click += (s, e) => BrowseFolder(txtDanConvertOutputFolder, false, true);
         btnBrowseTjaFile.Click += (s, e) => BrowseFile(txtTjaFile, "TJA files (*.tja)|*.tja|All files (*.*)|*.*");
 
         // Sync Source Folders
@@ -52,9 +54,9 @@ public partial class MainForm : Form
         txtDanSongsPath.Leave += (s, e) => SyncSimuFolders(txtDanSongsPath.Text);
         txtDanConvertSimu.Leave += (s, e) => SyncSimuFolders(txtDanConvertSimu.Text);
 
-        // Sync Output Sub Folders
-        txtDanOutputSub.TextChanged += (s, e) => { SyncOutputSubFolders(txtDanOutputSub.Text); SaveSettings(); };
-        txtDanConvertOutputSub.TextChanged += (s, e) => { SyncOutputSubFolders(txtDanConvertOutputSub.Text); SaveSettings(); };
+        // Save Settings on text change
+        txtDanOutputFolder.TextChanged += (s, e) => SaveSettings();
+        txtDanConvertOutputFolder.TextChanged += (s, e) => SaveSettings();
         
         // Operations
         btnFetchLists.Click += async (s, e) => await OnFetchListsClick();
@@ -101,8 +103,8 @@ public partial class MainForm : Form
 
     private void SyncOutputSubFolders(string value)
     {
-        if (txtDanOutputSub.Text != value) txtDanOutputSub.Text = value;
-        if (txtDanConvertOutputSub.Text != value) txtDanConvertOutputSub.Text = value;
+        if (txtDanOutputFolder.Text != value) txtDanOutputFolder.Text = value;
+        if (txtDanConvertOutputFolder.Text != value) txtDanConvertOutputFolder.Text = value;
     }
 
     private void SyncSimuFolders(string newValue)
@@ -457,6 +459,12 @@ public partial class MainForm : Form
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(txtDanOutputFolder.Text))
+        {
+            MessageBox.Show("出力フォルダを選択してください。", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
         var ct = BeginOperation();
         SetStatus("Dan.json 生成中...", true);
         SetIndeterminateProgress(true);
@@ -464,9 +472,7 @@ public partial class MainForm : Form
 
         try
         {
-            string subDir = txtDanOutputSub.Text.Trim();
-            if (string.IsNullOrEmpty(subDir)) subDir = "Default";
-            string outputDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DanLists", subDir);
+            string outputDir = txtDanOutputFolder.Text.Trim();
 
             string filter = txtWikiFilter.Text.Trim();
             await DanGeneratorCore.GenerateAsync(txtWikiUrl.Text, outputDir, txtDanSongsPath.Text, filter, Log, ct);
@@ -493,9 +499,15 @@ public partial class MainForm : Form
 
     private async Task OnConvertDanClick()
     {
-        if (string.IsNullOrWhiteSpace(txtTjaFile.Text) || string.IsNullOrWhiteSpace(txtDanConvertSimu.Text))
+        if (string.IsNullOrWhiteSpace(txtTjaFile.Text))
         {
-            MessageBox.Show("変換対象(TJA)とシミュフォルダを選択してください。", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("変換対象のTJAを選択してください。", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(txtDanConvertOutputFolder.Text))
+        {
+            MessageBox.Show("出力フォルダを選択してください。", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -506,9 +518,7 @@ public partial class MainForm : Form
 
         try
         {
-            string subDir = txtDanConvertOutputSub.Text.Trim();
-            if (string.IsNullOrEmpty(subDir)) subDir = "Default";
-            string outputRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DanLists", subDir);
+            string outputRoot = txtDanConvertOutputFolder.Text.Trim();
 
             var paths = txtTjaFile.Text.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var tjaFiles = new List<string>();
@@ -538,7 +548,8 @@ public partial class MainForm : Form
             {
                 ct.ThrowIfCancellationRequested();
                 Log($"処理開始: {Path.GetFileName(tja)}");
-                await DanConvertorCore.ConvertAsync(tja, outputRoot, txtDanConvertSimu.Text, Log, ct);
+                string simuFolder = string.IsNullOrWhiteSpace(txtDanConvertSimu.Text) ? "" : txtDanConvertSimu.Text;
+                await DanConvertorCore.ConvertAsync(tja, outputRoot, simuFolder, Log, ct);
             }
 
             Log("すべての変換が完了しました。");
@@ -716,8 +727,8 @@ public partial class MainForm : Form
             DanSongsPath = txtDanSongsPath.Text,
             DanConvertSimu = txtDanConvertSimu.Text,
             WikiUrl = txtWikiUrl.Text,
-            OutputSub = txtDanOutputSub.Text,
-            ConvertOutputSub = txtDanConvertOutputSub.Text,
+            DanOutputFolder = txtDanOutputFolder.Text,
+            DanConvertOutputFolder = txtDanConvertOutputFolder.Text,
             WikiFilter = txtWikiFilter.Text,
             TjaFile = txtTjaFile.Text,
             SelectedCategoriesCsv = string.Join("|", GetSelectedSourceCategories())
@@ -745,8 +756,8 @@ public partial class MainForm : Form
             txtDanConvertSimu.Text = settings.DanConvertSimu ?? "";
             txtTjaFile.Text = settings.TjaFile ?? "";
             
-            txtDanOutputSub.Text = settings.OutputSub ?? "今段位";
-            txtDanConvertOutputSub.Text = settings.ConvertOutputSub ?? txtDanOutputSub.Text;
+            txtDanOutputFolder.Text = settings.DanOutputFolder ?? "";
+            txtDanConvertOutputFolder.Text = settings.DanConvertOutputFolder ?? "";
 
             txtWikiUrl.Text = "";
             txtWikiFilter.Text = "";
@@ -790,8 +801,8 @@ public partial class MainForm : Form
         public string DanSongsPath { get; set; } = "";
         public string DanConvertSimu { get; set; } = "";
         public string WikiUrl { get; set; } = "";
-        public string OutputSub { get; set; } = "";
-        public string ConvertOutputSub { get; set; } = "";
+        public string DanOutputFolder { get; set; } = "";
+        public string DanConvertOutputFolder { get; set; } = "";
         public string WikiFilter { get; set; } = "";
         public string TjaFile { get; set; } = "";
         public string SelectedCategoriesCsv { get; set; } = "";
