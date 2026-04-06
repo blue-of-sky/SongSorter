@@ -6,7 +6,7 @@ namespace SongConverter.UI;
 
 public partial class MainForm : Form
 {
-    private string SettingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.json");
+    private string SettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SongConverter", "settings.json");
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
     private static readonly (string SourceCategory, string FetchFileName)[] CategoryMap =
     {
@@ -724,6 +724,7 @@ public partial class MainForm : Form
         };
 
         var json = JsonSerializer.Serialize(settings);
+        Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
         File.WriteAllText(SettingsPath, json, Utf8NoBom);
     }
 
