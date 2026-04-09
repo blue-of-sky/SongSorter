@@ -63,6 +63,7 @@ public class DanGeneratorCore
         int foundOrder = 0;
         int totalProcessed = 0;
         var missingSongs = new List<string>();
+        var danCoursesList = new List<(DanCourse course, string detectedRank, int rankIdx, HtmlNode row, Dictionary<int, string> colMap)>();
 
         foreach (var table in tables)
         {
@@ -158,7 +159,9 @@ public class DanGeneratorCore
                         string rowText = sRow.InnerText;
                         if (!rowText.Contains("st") && !rowText.Contains("nd") && !rowText.Contains("rd") && songsAdded >= 3) break;
 
-                        string safeSongTitle = NormalizationUtils.SanitizeFolderName(songTitle);
+                        // フォルダ名に使えない文字を削除（_ではなく削除）
+                        string safeSongTitle = NormalizationUtils.SanitizeFileName(songTitle);
+                        
                         string genre = "ナムコオリジナル";
                         var colorCell = sRow.SelectSingleNode(".//td[contains(@style, 'background-color:#')]");
                         if (colorCell != null) genre = MapGenreColor(GetStyleValue(colorCell, "background-color"));
@@ -166,8 +169,17 @@ public class DanGeneratorCore
                         string diffText = sRow.InnerText;
                         var diffCell = sCells.FirstOrDefault(c => c.InnerText.Contains("★"));
                         if (diffCell != null) diffText = diffCell.InnerText;
+                        
+                        // (裏)が含まれているかチェック（元のタイトルでチェック）
+                        bool isUra = songTitle.Contains("(裏)") || diffText.Contains("裏") || diffText.Contains("(裏)");
+                        
+                        // pathから(裏)を削除
+                        string pathTitle = safeSongTitle.Replace("(裏)", "").Replace("(裏譜面)", "").Trim();
+                        
+                        // 裏譜面の場合はdifficultyを4に、そうでなければDetectDifficultyの結果を使用
+                        int difficulty = isUra ? 4 : DetectDifficulty(diffText);
 
-                        dan.danSongs.Add(new DanSong { path = $"{safeSongTitle}.tja", difficulty = DetectDifficulty(diffText), genre = genre });
+                        dan.danSongs.Add(new DanSong { path = $"{pathTitle}.tja", difficulty = difficulty, genre = genre });
                         songsAdded++;
 
                         if (songsAdded == 1) ParseConditionsFromRow(sRow, colMap, dan);
@@ -176,42 +188,58 @@ public class DanGeneratorCore
 
                     if (dan.danSongs.Count > 0)
                     {
-                        string prefix = foundOrder.ToString("D2");
-                        string safeRankName = NormalizationUtils.SanitizeFolderName(detectedRank);
-                        string rankFolder = Path.Combine(outputDir, $"{prefix} {safeRankName}");
-                        if (!Directory.Exists(rankFolder)) Directory.CreateDirectory(rankFolder);
-
-                        if (!string.IsNullOrEmpty(songsFolder) && Directory.Exists(songsFolder))
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            var allDirs = Directory.GetDirectories(songsFolder, "*", SearchOption.AllDirectories);
-                            foreach (var s in dan.danSongs)
-                            {
-                                ct.ThrowIfCancellationRequested();
-                                string songNameRaw = Path.GetFileNameWithoutExtension(s.path); 
-                                string songNameForSearch = songNameRaw.Replace("(裏譜面)", "").Replace("(裏)", "").Trim();
-                                string? foundDir = FindDirectoryFuzzy(allDirs, songNameForSearch);
-                                if (foundDir != null)
-                                {
-                                    foreach (var file in Directory.GetFiles(foundDir))
-                                    {
-                                        string ext = Path.GetExtension(file).ToLower();
-                                        if (ext == ".tja") File.Copy(file, Path.Combine(rankFolder, s.path), true);
-                                        else if (ext == ".ogg" || ext == ".mp3") File.Copy(file, Path.Combine(rankFolder, Path.GetFileName(file)), true);
-                                    }
-                                }
-                                else { missingSongs.Add($"[{detectedRank}] {songNameRaw}"); }
-                            }
-                        }
-
-                        string json = JsonSerializer.Serialize(dan, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-                        await File.WriteAllTextAsync(Path.Combine(rankFolder, "Dan.json"), json, ct);
-                        totalProcessed++; foundOrder++; lastParsedRankName = detectedRank;
+                        // データをリストに保存（後でソートして出力）
+                        danCoursesList.Add((dan, detectedRank, rankIdx, row, colMap));
+                        lastParsedRankName = detectedRank;
                     }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex) { logAction?.Invoke($"  警告 ({detectedRank}): {ex.Message}"); }
             }
+        }
+
+        // ランク順にソート（達人→五級、つまりrankIdxの降順）
+        danCoursesList = danCoursesList.OrderByDescending(d => d.rankIdx).ToList();
+
+        // ソート済みデータを出力
+        foreach (var item in danCoursesList)
+        {
+            ct.ThrowIfCancellationRequested();
+            var dan = item.course;
+            var detectedRank = item.detectedRank;
+            var rankIdx = item.rankIdx;
+            
+            string prefix = foundOrder.ToString("D2");
+            string safeRankName = NormalizationUtils.SanitizeFolderName(detectedRank);
+            string rankFolder = Path.Combine(outputDir, $"{prefix} {safeRankName}");
+            if (!Directory.Exists(rankFolder)) Directory.CreateDirectory(rankFolder);
+
+            if (!string.IsNullOrEmpty(songsFolder) && Directory.Exists(songsFolder))
+            {
+                ct.ThrowIfCancellationRequested();
+                var allDirs = Directory.GetDirectories(songsFolder, "*", SearchOption.AllDirectories);
+                foreach (var s in dan.danSongs)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    string songNameRaw = Path.GetFileNameWithoutExtension(s.path); 
+                    string songNameForSearch = songNameRaw.Replace("(裏譜面)", "").Replace("(裏)", "").Trim();
+                    string? foundDir = FindDirectoryFuzzy(allDirs, songNameForSearch);
+                    if (foundDir != null)
+                    {
+                        foreach (var file in Directory.GetFiles(foundDir))
+                        {
+                            string ext = Path.GetExtension(file).ToLower();
+                            if (ext == ".tja") File.Copy(file, Path.Combine(rankFolder, s.path), true);
+                            else if (ext == ".ogg" || ext == ".mp3") File.Copy(file, Path.Combine(rankFolder, Path.GetFileName(file)), true);
+                        }
+                    }
+                    else { missingSongs.Add($"[{detectedRank}] {songNameRaw}"); }
+                }
+            }
+
+            string json = JsonSerializer.Serialize(dan, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+            await File.WriteAllTextAsync(Path.Combine(rankFolder, "Dan.json"), json, ct);
+            totalProcessed++; foundOrder++;
         }
 
         logAction?.Invoke($"生成完了: {totalProcessed} 件の段位を処理しました。");

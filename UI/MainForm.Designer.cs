@@ -83,7 +83,7 @@ partial class MainForm
         this.tabControl.Location = new System.Drawing.Point(0, 0);
         this.tabControl.Name = "tabControl";
         this.tabControl.SelectedIndex = 0;
-        this.tabControl.Size = new System.Drawing.Size(684, 400); // Expanded slightly for output folder
+        this.tabControl.Size = new System.Drawing.Size(784, 450); // Expanded slightly for output folder
         this.tabControl.TabIndex = 0;
 
         // tabAddSongs
@@ -213,7 +213,7 @@ partial class MainForm
         this.txtDanOutputFolder.Location = new System.Drawing.Point(290, 110);
         this.txtDanOutputFolder.Size = new System.Drawing.Size(360, 23);
 
-        this.btnBrowseDanOutputFolder.Location = new System.Drawing.Point(560, 168);
+        this.btnBrowseDanOutputFolder.Location = new System.Drawing.Point(660, 108);
         this.btnBrowseDanOutputFolder.Size = new System.Drawing.Size(90, 27);
         this.btnBrowseDanOutputFolder.Text = "参照...";
 
@@ -331,7 +331,7 @@ partial class MainForm
         // MainForm
         this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
         this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-        this.ClientSize = new System.Drawing.Size(684, 621);
+        this.ClientSize = new System.Drawing.Size(800, 680);
         this.Controls.Add(this.logBox);
         this.Controls.Add(this.statusStrip);
         this.Controls.Add(this.tabControl);

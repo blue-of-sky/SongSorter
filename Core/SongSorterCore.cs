@@ -432,15 +432,27 @@ public static class SongSorterCore
         var minLen = Math.Min(a.Length, b.Length);
         if (minLen < 4) return false;
 
+        // 短いタイトルほど厳密に: 6文字以下は10%、7文字以上は30%の許容
+        var maxRatio = minLen <= 6 ? 0.10 : 0.30;
+
         if (a.StartsWith(b, StringComparison.Ordinal) || b.StartsWith(a, StringComparison.Ordinal))
         {
-            var diff = Math.Abs(a.Length - b.Length);
-            return diff <= Math.Max(10, minLen);
+            // 短い方の長さに対して、長さの差が許容範囲内の場合のみマッチングを許可
+            // これにより「カゲロウ」が「カゲロウデイズ」に誤マッチングするのを防ぐ
+            var longerLen = Math.Max(a.Length, b.Length);
+            var diff = longerLen - minLen;
+            var diffRatio = (double)diff / minLen;
+            return diffRatio <= maxRatio;
         }
 
         if (a.Contains(b, StringComparison.Ordinal) || b.Contains(a, StringComparison.Ordinal))
         {
-            return minLen >= 6;
+            // 短い方の長さに対して、長さの差が許容範囲内の場合のみマッチングを許可
+            // これにより「カラフル」が「カラフルボイス」に誤マッチングするのを防ぐ
+            var longerLen = Math.Max(a.Length, b.Length);
+            var diff = longerLen - minLen;
+            var diffRatio = (double)diff / minLen;
+            return minLen >= 6 && diffRatio <= maxRatio;
         }
 
         return false;

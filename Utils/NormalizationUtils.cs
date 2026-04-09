@@ -286,4 +286,20 @@ public static class NormalizationUtils
         }
         return sb.ToString().Trim();
     }
+
+    /// <summary>
+    /// ファイル名に使えない文字を削除する（Dan.jsonのpath用）
+    /// </summary>
+    public static string SanitizeFileName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "Unnamed";
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(name.Length);
+        foreach (var c in name)
+        {
+            if (!invalid.Contains(c))
+                sb.Append(c);
+        }
+        return sb.ToString().Trim();
+    }
 }
