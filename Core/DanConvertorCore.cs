@@ -87,7 +87,6 @@ public class DanConvertorCore
             {
                 string tjaPathOut = Path.Combine(outputDir, targetTjaName);
                 var sb = new StringBuilder();
-                sb.AppendLine("//TJADB Project");
                 sb.AppendLine($"TITLE:{section.Title}");
                 sb.AppendLine($"TITLEJA:{section.Title}");
                 sb.AppendLine($"SUBTITLE:{section.Subtitle}");
