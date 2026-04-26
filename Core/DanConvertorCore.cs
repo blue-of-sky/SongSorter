@@ -25,11 +25,12 @@ public class DanConvertorCore
             if (match.Success) globalMeta[match.Groups[1].Value] = match.Groups[2].Value.Trim();
         }
 
-        string? courseTitle = globalMeta.GetValueOrDefault("TITLE") ?? Path.GetFileNameWithoutExtension(tjaPath);
-        string safeTitle = string.Join("_", courseTitle.Split(Path.GetInvalidFileNameChars()));
+        string tjaFileName = Path.GetFileNameWithoutExtension(tjaPath);
+        string safeTitle = string.Join("_", tjaFileName.Split(Path.GetInvalidFileNameChars()));
         string outputDir = Path.Combine(outputRoot, safeTitle);
         Directory.CreateDirectory(outputDir);
 
+        string? courseTitle = globalMeta.GetValueOrDefault("TITLE") ?? tjaFileName;
         logAction?.Invoke($"分割優先変換を開始: {courseTitle} -> {outputDir}");
 
         var danJson = new DanJson { title = courseTitle };
@@ -59,83 +60,57 @@ public class DanConvertorCore
         foreach (var section in sections)
         {
             ct.ThrowIfCancellationRequested();
-            bool processed = false;
             string targetTjaName = Path.ChangeExtension(section.Wave, ".tja");
+            string tjaPathOut = Path.Combine(outputDir, targetTjaName);
+            var sb = new StringBuilder();
+            sb.AppendLine($"TITLE:{section.Title}");
+            sb.AppendLine($"SUBTITLE:{section.Subtitle}");
+            sb.AppendLine($"BPM:{section.BPM}");
+            sb.AppendLine($"WAVE:{section.Wave}");
+            sb.AppendLine($"OFFSET:{section.Offset}");
+            sb.AppendLine($"GENRE:{section.Genre}");
+            sb.AppendLine($"COURSE:{section.Course}");
+            sb.AppendLine($"LEVEL:{globalMeta.GetValueOrDefault("LEVEL", "10")}");
+            if (!string.IsNullOrEmpty(section.Balloon)) sb.AppendLine($"BALLOON:{section.Balloon}");
+            else if (globalMeta.ContainsKey("BALLOON")) sb.AppendLine($"BALLOON:{globalMeta["BALLOON"]}");
+            if (!string.IsNullOrEmpty(section.ScoreInit)) sb.AppendLine($"SCOREINIT:{section.ScoreInit}");
+            if (!string.IsNullOrEmpty(section.ScoreDiff)) sb.AppendLine($"SCOREDIFF:{section.ScoreDiff}");
+            if (globalMeta.ContainsKey("SCOREMODE")) sb.AppendLine($"SCOREMODE:{globalMeta["SCOREMODE"]}");
+            sb.AppendLine("");
+            sb.AppendLine("#START");
+            sb.AppendLine("");
 
-            // --- Priority Level 1: Search Standalone TJA in Selected Local Folder ---
-            string localTja = Path.Combine(localDir, targetTjaName);
-            string localMusic = Path.Combine(localDir, section.Wave);
+            // Contentには#NEXTSONG以降の譜面データが含まれている
+            foreach (var l in section.Content)
+            {
+                if (l.Trim().StartsWith("COURSE:", StringComparison.OrdinalIgnoreCase)) continue;
+                sb.AppendLine(l);
+            }
+
+            await File.WriteAllTextAsync(tjaPathOut, sb.ToString(), new UTF8Encoding(false), ct);
             
-            if (File.Exists(localTja) && File.Exists(localMusic))
+            // Find music file (Dan TJA folder first, then Simulator folder)
+            string musicPath = Path.Combine(localDir, section.Wave);
+            string? waveFallback = File.Exists(musicPath) ? musicPath
+                                  : allSimuFiles?.FirstOrDefault(f => Path.GetFileName(f).Equals(section.Wave, StringComparison.OrdinalIgnoreCase));
+            
+            if (waveFallback != null)
             {
-                File.Copy(localTja, Path.Combine(outputDir, targetTjaName), true);
-                File.Copy(localMusic, Path.Combine(outputDir, section.Wave), true);
-
-                string localDanPlate = Path.Combine(localDir, "Dan_Plate.png");
-                if (File.Exists(localDanPlate))
-                {
-                    File.Copy(localDanPlate, Path.Combine(outputDir, "Plate.png"), true);
-                }
-
-                finalSongs.Add(new DanSong { path = targetTjaName, genre = section.Genre, difficulty = 3 });
-                logAction?.Invoke($"  選択フォルダから反映: {section.Title}");
-                processed = true;
+                File.Copy(waveFallback, Path.Combine(outputDir, section.Wave), true);
+                logAction?.Invoke($"  分割譜面を生成 + 音源採取: {section.Title}");
+            }
+            else
+            {
+                logAction?.Invoke($"  警告: 音源が見つかりませんでした (要確認): {section.Title}");
             }
 
-            // --- Priority Level 2: Split from Dan TJA ---
-            if (!processed)
+            string danPlateFallback = Path.Combine(localDir, "Dan_Plate.png");
+            if (File.Exists(danPlateFallback))
             {
-                string tjaPathOut = Path.Combine(outputDir, targetTjaName);
-                var sb = new StringBuilder();
-                sb.AppendLine($"TITLE:{section.Title}");
-                sb.AppendLine($"TITLEJA:{section.Title}");
-                sb.AppendLine($"SUBTITLE:{section.Subtitle}");
-                sb.AppendLine($"SUBTITLEJA:{section.Subtitle}");
-                sb.AppendLine($"BPM:{section.BPM}");
-                sb.AppendLine($"WAVE:{section.Wave}");
-                sb.AppendLine($"OFFSET:{section.Offset}");
-                if (!string.IsNullOrEmpty(section.DemoStart)) sb.AppendLine($"DEMOSTART:{section.DemoStart}");
-                sb.AppendLine("");
-
-                sb.AppendLine("COURSE:Oni");
-                sb.AppendLine($"LEVEL:{globalMeta.GetValueOrDefault("LEVEL", "10")}");
-                if (globalMeta.ContainsKey("BALLOON")) sb.AppendLine($"BALLOON:{globalMeta["BALLOON"]}");
-                if (!string.IsNullOrEmpty(section.ScoreInit)) sb.AppendLine($"SCOREINIT:{section.ScoreInit}");
-                if (!string.IsNullOrEmpty(section.ScoreDiff)) sb.AppendLine($"SCOREDIFF:{section.ScoreDiff}");
-                sb.AppendLine("");
-                sb.AppendLine("#START");
-                foreach (var l in section.Content)
-                {
-                    if (l.Trim().StartsWith("COURSE:", StringComparison.OrdinalIgnoreCase)) continue;
-                    sb.AppendLine(l);
-                    if (l.Trim().EndsWith("#END", StringComparison.OrdinalIgnoreCase)) break;
-                }
-                sb.AppendLine("#END");
-
-                await File.WriteAllTextAsync(tjaPathOut, sb.ToString(), new UTF8Encoding(false), ct);
-                
-                // Find music file (Local folder first, then Simulator folder)
-                string? waveFallback = File.Exists(localMusic) ? localMusic 
-                                      : allSimuFiles?.FirstOrDefault(f => Path.GetFileName(f).Equals(section.Wave, StringComparison.OrdinalIgnoreCase));
-                
-                if (waveFallback != null)
-                {
-                    File.Copy(waveFallback, Path.Combine(outputDir, section.Wave), true);
-                    logAction?.Invoke($"  分割譜面を生成 + 音源採取({(waveFallback.Contains(localDir) ? "選択フォルダ" : "シミュ")}): {section.Title}");
-                }
-                else
-                {
-                    logAction?.Invoke($"  警告: 音源が見つかりませんでした (要確認): {section.Title}");
-                }
-
-                string danPlateFallback = Path.Combine(localDir, "Dan_Plate.png");
-                if (File.Exists(danPlateFallback))
-                {
-                    File.Copy(danPlateFallback, Path.Combine(outputDir, "Plate.png"), true);
-                }
-
-                finalSongs.Add(new DanSong { path = targetTjaName, genre = section.Genre, difficulty = 3 });
+                File.Copy(danPlateFallback, Path.Combine(outputDir, "Plate.png"), true);
             }
+
+            finalSongs.Add(new DanSong { path = targetTjaName, genre = section.Genre, difficulty = 3 });
         }
 
         danJson.danSongs = finalSongs.ToArray();
@@ -150,12 +125,25 @@ public class DanConvertorCore
         var sections = new List<SplitSection>();
         SplitSection? current = null;
         string lastBpm = globalMeta.GetValueOrDefault("BPM", "120");
+        string lastCourse = "4";
+        bool inSongBlock = false;  // #NEXTSONG 検出後 〜 #END まで
+
         foreach (var line in lines)
         {
             var trimmed = line.Trim();
+
             if (trimmed.StartsWith("#NEXTSONG", StringComparison.OrdinalIgnoreCase))
             {
-                if (current != null) sections.Add(current);
+                // 前の曲を確定
+                if (current != null)
+                {
+                    // 末尾の空行を除去
+                    while (current.Content.Count > 0 && string.IsNullOrWhiteSpace(current.Content[current.Content.Count - 1]))
+                        current.Content.RemoveAt(current.Content.Count - 1);
+                    sections.Add(current);
+                }
+
+                // 次の曲を開始
                 var parts = trimmed.Substring(9).Split(',');
                 current = new SplitSection
                 {
@@ -165,21 +153,89 @@ public class DanConvertorCore
                     Wave = parts.Length > 3 ? parts[3].Trim() : "song.ogg",
                     ScoreInit = parts.Length > 4 ? parts[4].Trim() : "",
                     ScoreDiff = parts.Length > 5 ? parts[5].Trim() : "",
-                    BPM = lastBpm
+                    DemoStart = parts.Length > 6 ? parts[6].Trim() : "0",
+                    // Offsetは#DELAYから計算するため、ここでは初期値のみ
+                    BPM = lastBpm,
+                    Course = "Oni"
                 };
+                inSongBlock = true;  // #NEXTSONG 以降は曲の内容
+            }
+            else if (trimmed.StartsWith("COURSE:", StringComparison.OrdinalIgnoreCase))
+            {
+                var courseVal = trimmed.Substring(7).Trim();
+                if (current != null) current.Course = courseVal;
+                if (!inSongBlock) lastCourse = courseVal;
+                if (current != null && inSongBlock) current.Content.Add(line);
+            }
+            else if (trimmed.StartsWith("DEMOSTART:", StringComparison.OrdinalIgnoreCase))
+            {
+                var demoVal = trimmed.Substring(10).Trim();
+                if (current != null) current.DemoStart = demoVal;
             }
             else if (trimmed.StartsWith("#BPMCHANGE", StringComparison.OrdinalIgnoreCase))
             {
+                // BPM変更を記録
                 lastBpm = trimmed.Substring(10).Trim();
-                if (current != null) { current.Content.Add(line); if (current.Content.Count < 20) current.BPM = lastBpm; }
+                if (current != null)
+                {
+                    current.BPM = lastBpm;
+                    if (inSongBlock) current.Content.Add(line);
+                }
             }
             else if (trimmed.StartsWith("#DELAY", StringComparison.OrdinalIgnoreCase))
             {
-                if (current != null && double.TryParse(trimmed.Substring(6).Trim(), out double d)) current.Offset = (-d).ToString("F3");
+                // #DELAYでOFFSETを計算（Contentには追加しない）
+                if (current != null && inSongBlock)
+                {
+                    var delayValue = trimmed.Substring(6).Trim();
+                    if (double.TryParse(delayValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double delay))
+                    {
+                        current.Offset = (-delay).ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+                    }
+                }
+                // #DELAYはContentには出力しない
             }
-            else if (current != null) { current.Content.Add(line); }
+            else if (trimmed.StartsWith("#BALLOON", StringComparison.OrdinalIgnoreCase))
+            {
+                // #BALLOONを記録（Contentには追加しない）
+                if (current != null && inSongBlock)
+                {
+                    var balloonValue = trimmed.Substring(8).Trim();
+                    if (balloonValue.StartsWith(":")) balloonValue = balloonValue.Substring(1).Trim();
+                    if (!string.IsNullOrEmpty(balloonValue)) current.Balloon = balloonValue;
+                }
+                // Contentには追加しない
+            }
+            else if (trimmed.StartsWith("#MEASURE", StringComparison.OrdinalIgnoreCase) ||
+                     trimmed.StartsWith("#SCROLL", StringComparison.OrdinalIgnoreCase) ||
+                     trimmed.StartsWith("#BARLINE", StringComparison.OrdinalIgnoreCase))
+            {
+                // これらのヘッダー行はContentに追加
+                if (current != null && inSongBlock) current.Content.Add(line);
+            }
+            else if (current != null && inSongBlock)
+            {
+                // EXAM行はスキップ（Contentに追加しない）
+                if (trimmed.StartsWith("EXAM", StringComparison.OrdinalIgnoreCase)) continue;
+                
+                // 譜面開始前の空行もスキップ（#DELAY/#BALLOON検出のため）
+                if (string.IsNullOrWhiteSpace(trimmed) && current.Content.Count == 0) continue;
+                
+                // #NEXTSONG 以降の譜面データを追加
+                current.Content.Add(line);
+                if (trimmed.Equals("#END", StringComparison.OrdinalIgnoreCase))
+                    inSongBlock = false;
+            }
         }
-        if (current != null) sections.Add(current);
+
+        // 最後の曲を確定
+        if (current != null)
+        {
+            while (current.Content.Count > 0 && string.IsNullOrWhiteSpace(current.Content[current.Content.Count - 1]))
+                current.Content.RemoveAt(current.Content.Count - 1);
+            sections.Add(current);
+        }
+
         return sections;
     }
 
@@ -208,8 +264,10 @@ public class DanConvertorCore
         public string ScoreInit { get; set; } = "";
         public string ScoreDiff { get; set; } = "";
         public string BPM { get; set; } = "";
-        public string Offset { get; set; } = "0.000";
+        public string Offset { get; set; } = "0";
         public string DemoStart { get; set; } = "";
+        public string Course { get; set; } = "4";
+        public string Balloon { get; set; } = "";
         public List<string> Content { get; set; } = new();
         public List<Condition> Conditions { get; set; } = new();
     }

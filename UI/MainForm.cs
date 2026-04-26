@@ -13,7 +13,7 @@ public partial class MainForm : Form
         ("00 ポップス", "pops.php"),
         ("01 キッズ", "kids.php"),
         ("02 アニメ", "anime.php"),
-        ("03 ボーカロイド曲", "vocaloid.php"),
+        ("03 ボーカロイド™曲", "vocaloid.php"),
         ("04 ゲームミュージック", "game.php"),
         ("05 バラエティ", "variety.php"),
         ("06 クラシック", "classic.php"),

@@ -58,12 +58,12 @@ partial class MainForm
         this.lblTjaFile = new System.Windows.Forms.Label();
         this.txtTjaFile = new System.Windows.Forms.TextBox();
         this.btnBrowseTjaFile = new System.Windows.Forms.Button();
-        this.lblDanConvertSimu = new System.Windows.Forms.Label();
-        this.txtDanConvertSimu = new System.Windows.Forms.TextBox();
-        this.btnBrowseDanConvertSimu = new System.Windows.Forms.Button();
         this.lblDanConvertOutputFolder = new System.Windows.Forms.Label();
         this.txtDanConvertOutputFolder = new System.Windows.Forms.TextBox();
         this.btnBrowseDanConvertOutputFolder = new System.Windows.Forms.Button();
+        this.lblDanConvertSimu = new System.Windows.Forms.Label();
+        this.txtDanConvertSimu = new System.Windows.Forms.TextBox();
+        this.btnBrowseDanConvertSimu = new System.Windows.Forms.Button();
         this.btnConvertDan = new System.Windows.Forms.Button();
 
         this.tabControl.SuspendLayout();
@@ -239,13 +239,13 @@ partial class MainForm
         // tabDanConvertor
         this.tabDanConvertor.BackColor = System.Drawing.Color.White;
         this.tabDanConvertor.AllowDrop = true;
-        this.tabDanConvertor.Controls.Add(this.lblDanConvertOutputFolder);
-        this.tabDanConvertor.Controls.Add(this.txtDanConvertOutputFolder);
-        this.tabDanConvertor.Controls.Add(this.btnBrowseDanConvertOutputFolder);
         this.tabDanConvertor.Controls.Add(this.btnConvertDan);
         this.tabDanConvertor.Controls.Add(this.btnBrowseDanConvertSimu);
         this.tabDanConvertor.Controls.Add(this.txtDanConvertSimu);
         this.tabDanConvertor.Controls.Add(this.lblDanConvertSimu);
+        this.tabDanConvertor.Controls.Add(this.btnBrowseDanConvertOutputFolder);
+        this.tabDanConvertor.Controls.Add(this.txtDanConvertOutputFolder);
+        this.tabDanConvertor.Controls.Add(this.lblDanConvertOutputFolder);
         this.tabDanConvertor.Controls.Add(this.btnBrowseTjaFile);
         this.tabDanConvertor.Controls.Add(this.txtTjaFile);
         this.tabDanConvertor.Controls.Add(this.lblTjaFile);
@@ -257,7 +257,7 @@ partial class MainForm
         this.tabDanConvertor.Text = "DanConvertor";
 
         this.lblTjaFile.Location = new System.Drawing.Point(20, 20);
-        this.lblTjaFile.Text = "変換対象のtjaを選択(またはドラッグアンドドロップ):";
+        this.lblTjaFile.Text = "変換対象の段位tjaを選択(またはドラッグアンドドロップ):";
         this.lblTjaFile.Size = new System.Drawing.Size(400, 20);
 
         this.txtTjaFile.Location = new System.Drawing.Point(20, 45);
@@ -280,7 +280,7 @@ partial class MainForm
         this.btnBrowseDanConvertOutputFolder.Text = "参照...";
 
         this.lblDanConvertSimu.Location = new System.Drawing.Point(20, 145);
-        this.lblDanConvertSimu.Text = "シミュフォルダを選択 (省略可・内部検索用):";
+        this.lblDanConvertSimu.Text = "シミュフォルダ (省略可・フォールバック用):";
         this.lblDanConvertSimu.Size = new System.Drawing.Size(400, 20);
 
         this.txtDanConvertSimu.Location = new System.Drawing.Point(20, 170);
@@ -392,11 +392,11 @@ partial class MainForm
     private System.Windows.Forms.Label lblTjaFile;
     private System.Windows.Forms.TextBox txtTjaFile;
     private System.Windows.Forms.Button btnBrowseTjaFile;
-    private System.Windows.Forms.Label lblDanConvertSimu;
-    private System.Windows.Forms.TextBox txtDanConvertSimu;
-    private System.Windows.Forms.Button btnBrowseDanConvertSimu;
     private System.Windows.Forms.Label lblDanConvertOutputFolder;
     private System.Windows.Forms.TextBox txtDanConvertOutputFolder;
     private System.Windows.Forms.Button btnBrowseDanConvertOutputFolder;
+    private System.Windows.Forms.Label lblDanConvertSimu;
+    private System.Windows.Forms.TextBox txtDanConvertSimu;
+    private System.Windows.Forms.Button btnBrowseDanConvertSimu;
     private System.Windows.Forms.Button btnConvertDan;
 }
